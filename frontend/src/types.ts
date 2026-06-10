@@ -95,6 +95,53 @@ export interface OperationPlan {
   rolled_back_at: string | null;
 }
 
+export interface AppSettingsRead {
+  tmdb_configured: boolean;
+  ai_configured: boolean;
+  ai_provider: string | null;
+  ai_base_url: string | null;
+  ai_model: string | null;
+  default_source_path: string | null;
+  default_target_path: string | null;
+  setup_completed: boolean;
+  updated_at: string;
+}
+
+export interface AppSettingsUpdate {
+  tmdb_api_key?: string | null;
+  ai_provider?: string | null;
+  ai_api_key?: string | null;
+  ai_base_url?: string | null;
+  ai_model?: string | null;
+  default_source_path?: string | null;
+  default_target_path?: string | null;
+  setup_completed?: boolean | null;
+}
+
+export interface TestConnectionResult {
+  success: boolean;
+  message: string;
+}
+
+export interface LocalModelsResult {
+  success: boolean;
+  models: string[];
+  message: string | null;
+}
+
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+}
+
+export interface BrowseResult {
+  current_path: string;
+  parent_path: string | null;
+  directories: DirectoryEntry[];
+  readable: boolean;
+  error: string | null;
+}
+
 export interface PlanOperation {
   id: number;
   plan_id: number;

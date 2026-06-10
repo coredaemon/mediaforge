@@ -1,55 +1,24 @@
 # MediaForge
 
-MediaForge is a local-first media library organizer for movies and TV shows. It is intended to help prepare local libraries for Jellyfin, Plex, and Kodi by scanning folders, parsing messy file names, matching metadata, previewing safe changes, applying approved operations, and supporting rollback.
+MediaForge — локальный организатор медиатеки фильмов и сериалов. Помогает привести коллекцию к аккуратной структуре для Jellyfin, Plex и Kodi: сканирует папки, парсит имена файлов, сопоставляет метаданные с TMDB и строит безопасный dry-run план. Файлы не перемещаются без явного подтверждения.
 
-This repository is public. Real API keys, tokens, user-specific settings, local database files, logs, caches, absolute user paths, and media files must never be committed. Use `.env.example` only as a placeholder template and keep real secrets in a local `.env` file outside version control.
+Репозиторий публичный. Реальные API-ключи, токены, локальные настройки, базы данных, кэши и медиафайлы никогда не попадают в commits.
 
-## Development Plan
+## Текущие возможности
 
-The first implementation path is:
+`create session → discover → parse → match TMDB → build dry-run plan → inspect operations`
 
-1. Scan local folders.
-2. Parse movie and episode candidates.
-3. Match confirmed candidates against TMDB as the canonical metadata source.
-4. Build a dry-run operation plan.
-5. Preview and safely apply approved file operations.
-6. Roll back applied operations when needed.
+- FastAPI backend, SQLite + SQLAlchemy 2.0 async
+- Сканирование папок без изменения файлов
+- Детерминированный парсер имён видеофайлов
+- Сопоставление с TMDB как каноническим источником метаданных
+- Dry-run planning: список будущих операций в БД без реального выполнения
+- Веб-интерфейс с мастером первого запуска, выбором папок, поддержкой Ollama/LM Studio/Gemini
+- Локальные настройки в SQLite (не попадают в git)
 
-The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, parse video filenames into first-pass `MediaItem` candidates, match those candidates against TMDB, build a dry-run operation plan for matched items, and return the result through the API. Discovery, parsing, matching, and planning are read-only: they do not move, delete, or modify media files.
+## Быстрый старт на Windows
 
-## Quick Start
-
-### Backend
-
-```bash
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -e ".[dev]"
-pytest
-python -m backend.scripts.init_db
-uvicorn backend.app.main:app --reload
-```
-
-Backend URL: `http://localhost:8000`
-
-The health endpoint is available at `GET /health`.
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-cp .env.example .env
-npm run dev
-```
-
-Frontend URL: `http://localhost:5173`
-
-The web UI talks to the backend through `VITE_API_BASE_URL` (default `http://localhost:8000`).
-
-### Quick start on Windows
-
-Install backend dependencies once:
+### Установка (один раз)
 
 ```powershell
 python -m venv .venv
@@ -57,158 +26,146 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-Start both backend and frontend in separate PowerShell windows:
+### Запуск
 
 ```powershell
 .\scripts\start-dev.ps1
 ```
 
-This opens:
+Откроет два окна PowerShell:
+- Backend: `http://127.0.0.1:8000`
+- Frontend: `http://127.0.0.1:5173`
 
-- backend at `http://127.0.0.1:8000`
-- frontend at `http://127.0.0.1:5173`
+Откройте `http://127.0.0.1:5173` в браузере.
 
-Open the web UI at `http://127.0.0.1:5173`.
+### Первый запуск через мастер
 
-You can also start each service separately:
+При первом открытии UI покажет мастер настройки (5 шагов):
+
+1. **Добро пожаловать** — описание режима safe preview
+2. **TMDB** — вставьте API ключ с [themoviedb.org/settings/api](https://www.themoviedb.org/settings/api)
+3. **AI-помощник** — выберите провайдера (Gemini, Ollama, LM Studio, Custom) или «Не использовать»
+4. **Папки** — выберите папки через встроенный file browser или введите вручную
+5. **Готово** — сохранить и начать работу
+
+Вернуться к настройкам позже: кнопка **⚙ Настройки** в шапке.
+
+### Где хранятся настройки
+
+Настройки (в т.ч. ключи) хранятся в локальной SQLite базе `mediaforge.local.sqlite3`.
+Файл находится в `.gitignore` и никогда не попадает в репозиторий.
+
+**Ключи не попадают в GitHub.** `GET /settings` возвращает только флаги `tmdb_configured` / `ai_configured`, но не сами ключи.
+
+## Раздельный запуск
 
 ```powershell
-.\scripts\start-backend.ps1
-.\scripts\start-frontend.ps1
+.\scripts\start-backend.ps1   # Backend на 8000
+.\scripts\start-frontend.ps1  # Frontend на 5173
 ```
 
-The frontend dev server must be running before you open the browser. If Firefox reports that it cannot connect to `localhost:5173`, start the frontend with `.\scripts\start-frontend.ps1` or `npm run dev` inside `frontend/`.
+## Backend команды
 
-On Windows, prefer `python -m uvicorn` if the `uvicorn` command is not on `PATH`.
-
-## Backend Commands
-
-Install dependencies:
+Установить зависимости:
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-Initialize the local SQLite database:
+Инициализировать БД:
 
 ```bash
 python -m backend.scripts.init_db
 ```
 
-Run the backend:
+Запустить backend:
 
 ```bash
-uvicorn backend.app.main:app --reload
+python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Check health:
+Health: `GET http://127.0.0.1:8000/health`
+
+## Frontend команды
 
 ```bash
-curl http://127.0.0.1:8000/health
+cd frontend
+npm install
+cp .env.example .env    # при необходимости изменить VITE_API_BASE_URL
+npm run dev             # dev-сервер на :5173
+npm run build           # production build
 ```
 
-Create a scan session:
+## Как настроить TMDB
 
-```bash
-curl -X POST http://127.0.0.1:8000/scan-sessions ^
-  -H "Content-Type: application/json" ^
-  -d "{\"source_path\":\"D:/Media/Inbox\",\"target_path\":\"D:/Media/Library\"}"
-```
+1. Зарегистрируйтесь на [themoviedb.org](https://www.themoviedb.org) бесплатно
+2. Перейдите в Settings → API → Request an API Key
+3. Скопируйте **API Read Access Token** или **API Key (v3 auth)**
+4. Вставьте в мастер настройки MediaForge или в `.env`:
+   ```
+   TMDB_API_KEY=ваш_ключ
+   ```
 
-Run discovery for a scan session:
+## Как подключить Gemini
 
-```bash
-curl -X POST http://127.0.0.1:8000/scan-sessions/1/discover
-```
+1. Получите ключ на [aistudio.google.com](https://aistudio.google.com)
+2. В мастере настройки выберите провайдер **Gemini**
+3. Вставьте API ключ и укажите модель (например `gemini-2.0-flash`)
 
-Parse discovered video files:
+## Как подключить Ollama
 
-```bash
-curl -X POST http://127.0.0.1:8000/scan-sessions/1/parse
-```
+1. Установите [Ollama](https://ollama.ai) и запустите хотя бы одну модель: `ollama pull mistral`
+2. В мастере выберите **Ollama**, нажмите **Найти модели** — список загрузится автоматически
+3. Endpoint по умолчанию: `http://127.0.0.1:11434`
 
-List discovered files:
+## Как подключить LM Studio
 
-```bash
-curl http://127.0.0.1:8000/scan-sessions/1/files
-```
+1. Запустите [LM Studio](https://lmstudio.ai) и включите Local Server (порт 1234)
+2. В мастере выберите **LM Studio**, нажмите **Найти модели**
+3. Endpoint по умолчанию: `http://127.0.0.1:1234`
 
-List parsed media item candidates:
+## Workflow через UI
 
-```bash
-curl http://127.0.0.1:8000/scan-sessions/1/items
-```
+1. Откройте `http://127.0.0.1:5173`
+2. Пройдите мастер настройки
+3. Создайте сессию сканирования (укажите папку с файлами и папку медиатеки через picker)
+4. На странице сессии последовательно:
+   - **Сканировать** → находит все медиафайлы
+   - **Распознать** → парсит имена файлов
+   - **Найти в TMDB** → сопоставляет с TMDB
+   - **Построить план** → создаёт список будущих операций
+5. Просмотрите **Операции** — файлы ещё не перемещены
 
-Run TMDB matching:
+**Планирование — только preview. Файлы не перемещаются.**
 
-```bash
-curl -X POST http://127.0.0.1:8000/scan-sessions/1/match-tmdb
-```
+## TMDB ключ (env fallback)
 
-List TMDB candidates for an item:
-
-```bash
-curl http://127.0.0.1:8000/items/1/tmdb-candidates
-```
-
-Create a dry-run operation plan:
-
-```bash
-curl -X POST http://127.0.0.1:8000/scan-sessions/1/plan
-```
-
-List plans for a scan session:
-
-```bash
-curl http://127.0.0.1:8000/scan-sessions/1/plans
-```
-
-Get a plan:
-
-```bash
-curl http://127.0.0.1:8000/operation-plans/1
-```
-
-List planned operations:
-
-```bash
-curl http://127.0.0.1:8000/operation-plans/1/operations
-```
-
-## Local Workflow
-
-1. Initialize the DB with `python -m backend.scripts.init_db`.
-2. Start the backend with `uvicorn backend.app.main:app --reload`.
-3. Create a scan session with `POST /scan-sessions`.
-4. Discover source files with `POST /scan-sessions/{id}/discover`.
-5. Parse video filenames with `POST /scan-sessions/{id}/parse`.
-6. Match parsed candidates with `POST /scan-sessions/{id}/match-tmdb`.
-7. Create a dry-run plan with `POST /scan-sessions/{id}/plan`.
-8. Inspect planned operations with `GET /operation-plans/{plan_id}/operations`.
-9. Inspect discovered files with `GET /scan-sessions/{id}/files`.
-10. Inspect parsed items with `GET /scan-sessions/{id}/items`.
-11. Inspect TMDB candidates with `GET /items/{item_id}/tmdb-candidates`.
-
-Planning is dry-run only. No files are moved, copied, deleted, or written yet. Apply and rollback are not implemented.
-
-## Web UI Workflow
-
-1. Start the backend on `http://localhost:8000`.
-2. Start the frontend on `http://localhost:5173`.
-3. Open the Sessions page and create a scan session with your local `source_path` and `target_path`.
-4. Open the session detail page.
-5. Run **Discover**, then **Parse**, then **Match TMDB**, then **Create Plan**.
-6. Inspect **Files**, **Items**, **Plans**, and **Operations** in the same page.
-7. Use **Show TMDB candidates** on an item to inspect match candidates.
-
-The UI is minimal and preview-only. It does not apply plans or change files on disk.
-
-## TMDB Key
-
-TMDB API keys are local-only. Put a real key in your local `.env` file:
+Альтернативно ключ можно указать в `.env`:
 
 ```bash
 TMDB_API_KEY=
 ```
 
-Never commit `.env` or real provider keys. The committed `.env.example` intentionally contains placeholders only. If matching is requested without `TMDB_API_KEY`, the API returns `400 TMDB_API_KEY is not configured`.
+Приоритет: настройки в БД → `.env`. Не коммитить `.env` с реальными ключами.
+
+## API endpoints
+
+| Method | Path | Описание |
+|--------|------|----------|
+| GET | `/health` | Статус backend |
+| GET | `/settings` | Настройки (без ключей) |
+| PUT | `/settings` | Сохранить настройки |
+| POST | `/settings/test-tmdb` | Проверить TMDB подключение |
+| POST | `/settings/test-ai` | Проверить AI подключение |
+| GET | `/settings/local-ai/ollama/models` | Модели Ollama |
+| GET | `/settings/local-ai/lmstudio/models` | Модели LM Studio |
+| GET | `/filesystem/roots` | Список дисков/корней |
+| GET | `/filesystem/browse?path=...` | Просмотр папки |
+| POST | `/scan-sessions` | Создать сессию |
+| GET | `/scan-sessions` | Список сессий |
+| POST | `/scan-sessions/{id}/discover` | Сканировать |
+| POST | `/scan-sessions/{id}/parse` | Распознать |
+| POST | `/scan-sessions/{id}/match-tmdb` | Найти в TMDB |
+| POST | `/scan-sessions/{id}/plan` | Построить план |
+| GET | `/scan-sessions/{id}/plans` | Планы сессии |
+| GET | `/operation-plans/{id}/operations` | Операции плана |

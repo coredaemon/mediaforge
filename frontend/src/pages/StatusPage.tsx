@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, getApiBaseUrl, getHealth } from "../api";
+import { t } from "../i18n";
 import type { HealthResponse } from "../types";
 
 export function StatusPage() {
@@ -10,49 +11,44 @@ export function StatusPage() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      setError(null);
       try {
-        const response = await getHealth();
-        setHealth(response);
+        setHealth(await getHealth());
       } catch (err) {
-        const message = err instanceof ApiError ? err.message : "Failed to reach backend";
-        setError(message);
+        setError(err instanceof ApiError ? err.message : t.health.offline);
         setHealth(null);
       } finally {
         setLoading(false);
       }
     }
-
     void load();
   }, []);
 
   return (
     <section className="panel">
-      <h2>About / Status</h2>
-      <p>
-        MediaForge is a local-first media library organizer. This minimal web UI lets you run the
-        discovery, parsing, TMDB matching, and dry-run planning pipeline without changing files on
-        disk.
-      </p>
+      <h2>{t.statusPage.title}</h2>
+      <p>{t.statusPage.description}</p>
       <div className="summary-grid">
         <div className="summary-item">
-          <strong>Backend URL</strong>
+          <strong>{t.statusPage.backendUrl}</strong>
           <span>{getApiBaseUrl()}</span>
         </div>
         <div className="summary-item">
-          <strong>Frontend URL</strong>
+          <strong>{t.statusPage.frontendUrl}</strong>
           <span>{window.location.origin}</span>
         </div>
         <div className="summary-item">
-          <strong>Health</strong>
+          <strong>{t.statusPage.healthLabel}</strong>
           <span>
-            {loading ? "Checking..." : error ? error : `${health?.app} ${health?.status}`}
+            {loading
+              ? t.common.loading
+              : error
+                ? error
+                : `${health?.app ?? ""} — ${health?.status ?? ""}`}
           </span>
         </div>
       </div>
-      <p className="muted">
-        Apply, rollback, poster download, and NFO writing are not implemented yet. Planning is
-        dry-run only.
+      <p className="muted" style={{ marginTop: "1rem" }}>
+        {t.statusPage.disclaimer}
       </p>
     </section>
   );

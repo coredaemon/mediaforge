@@ -1,11 +1,16 @@
 import type {
+  AppSettingsRead,
+  AppSettingsUpdate,
+  BrowseResult,
   HealthResponse,
+  LocalModelsResult,
   MediaFile,
   MediaItem,
   OperationPlan,
   PlanOperation,
   ScanSession,
   ScanSessionCreate,
+  TestConnectionResult,
   TmdbMatchCandidate,
   TmdbMatchResult,
 } from "./types";
@@ -115,8 +120,48 @@ export function listTmdbCandidates(itemId: number): Promise<TmdbMatchCandidate[]
 }
 
 export function formatTmdbError(message: string): string {
-  if (message.includes("TMDB_API_KEY is not configured")) {
-    return "TMDB_API_KEY is not configured. Add it to your local .env and restart backend.";
+  if (message.includes("TMDB_API_KEY is not configured") || message.includes("не настроен")) {
+    return "TMDB API ключ не настроен. Перейдите в Настройки и добавьте ключ.";
   }
   return message;
+}
+
+// Settings
+export function getSettings(): Promise<AppSettingsRead> {
+  return request<AppSettingsRead>("/settings");
+}
+
+export function updateSettings(payload: AppSettingsUpdate): Promise<AppSettingsRead> {
+  return request<AppSettingsRead>("/settings", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function testTmdbConnection(apiKey?: string): Promise<TestConnectionResult> {
+  const query = apiKey ? `?api_key=${encodeURIComponent(apiKey)}` : "";
+  return request<TestConnectionResult>(`/settings/test-tmdb${query}`, { method: "POST" });
+}
+
+export function testAiConnection(): Promise<TestConnectionResult> {
+  return request<TestConnectionResult>("/settings/test-ai", { method: "POST" });
+}
+
+export function getOllamaModels(endpoint?: string): Promise<LocalModelsResult> {
+  const query = endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : "";
+  return request<LocalModelsResult>(`/settings/local-ai/ollama/models${query}`);
+}
+
+export function getLmStudioModels(endpoint?: string): Promise<LocalModelsResult> {
+  const query = endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : "";
+  return request<LocalModelsResult>(`/settings/local-ai/lmstudio/models${query}`);
+}
+
+// Filesystem
+export function getFilesystemRoots(): Promise<string[]> {
+  return request<string[]>("/filesystem/roots");
+}
+
+export function browseDirectory(path: string): Promise<BrowseResult> {
+  return request<BrowseResult>(`/filesystem/browse?path=${encodeURIComponent(path)}`);
 }

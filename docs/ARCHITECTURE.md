@@ -1,21 +1,22 @@
 # Architecture
 
-MediaForge is designed as a local-first web application with a Python backend, SQLite database, and future web UI.
+MediaForge is a local-first web application with a Python/FastAPI backend, SQLite database, and a React/TypeScript web UI.
 
 ## Layers
 
 - **FastAPI API layer** exposes HTTP endpoints and delegates all workflow decisions to services.
-- **Service layer** coordinates application use cases such as scanning, parsing, planning, applying, and rollback.
+- **Service layer** coordinates application use cases: scanning, parsing, planning, settings, filesystem browsing.
 - **Repository layer** owns database reads and writes behind explicit interfaces.
-- **SQLite database** stores local application state and materialized operation plans.
+- **SQLite database** stores local application state, materialized operation plans, and app settings.
 - **Scanner** discovers candidate media files without modifying the filesystem.
 - **Parser** turns filenames and folder context into structured candidates.
-- **AI Analyzer** may help interpret messy names, but it does not define truth.
 - **TMDB Client** resolves confirmed matches against the canonical metadata source.
 - **Planner** builds dry-run operation plans for preview.
-- **Apply Engine** applies only approved, materialized operation plans.
-- **Rollback Engine** reverses applied operations using recorded plan data.
-- **Web UI** provides a minimal local browser interface for running and inspecting the pipeline.
+- **Settings** stores local configuration including API keys — never committed to git.
+- **Filesystem Service** provides read-only directory browsing for the UI folder picker.
+- **Web UI** provides a Russian-language local browser interface for running and inspecting the pipeline.
+- **Apply Engine** — not implemented yet.
+- **Rollback Engine** — not implemented yet.
 
 ## Pipeline
 
@@ -25,108 +26,102 @@ DISCOVERED -> PARSED -> MATCHED -> PLANNED -> READY_TO_APPLY -> APPLYING -> COMP
                                                                   \-> ROLLED_BACK
 ```
 
-The pipeline is intentionally staged so discovery and planning can be inspected before any filesystem changes are attempted.
+The pipeline is intentionally staged: discovery and planning can be inspected before any filesystem changes are attempted.
 
 ## Current Models
 
 - `ScanSession` stores source and target paths, lifecycle status, timestamps, and errors.
 - `MediaFile` stores discovered file paths, names, extensions, sizes, classification, and scan errors.
 - `MediaItem` stores parsed movie, TV episode, or unknown local candidates.
+- `TmdbMatchCandidate` stores TMDB search results scored against a parsed candidate.
 - `OperationPlan` stores a materialized dry-run plan for a scan session.
-- `PlanOperation` stores one planned filesystem or metadata action such as `CREATE_DIR`, `MOVE_FILE`, `WRITE_TEXT_FILE`, or `DOWNLOAD_FILE`.
+- `PlanOperation` stores one planned action: `CREATE_DIR`, `MOVE_FILE`, `WRITE_TEXT_FILE`, or `DOWNLOAD_FILE`.
+- `AppSettings` stores local configuration: API keys, AI provider settings, default paths, setup state.
 
 ## Current Scanner Flow
-
-The scanner currently performs discovery only:
 
 1. Load the `ScanSession` from SQLite.
 2. Validate that `source_path` exists and is a directory.
 3. Mark the session as `DISCOVERING`.
-4. Walk the source directory with `os.scandir()`.
-5. Classify files as `VIDEO`, `SUBTITLE`, `SIDECAR`, or `OTHER`.
-6. Store each discovered file in `MediaFile`.
-7. Mark the session as `DISCOVERED`, or `FAILED` for critical errors.
-
-It does not parse titles, call TMDB, call AI providers, build apply plans, move files, delete files, download posters, or generate NFO files.
+4. Walk the source directory and classify files as `VIDEO`, `SUBTITLE`, `SIDECAR`, or `OTHER`.
+5. Store each discovered file in `MediaFile`.
+6. Mark the session as `DISCOVERED`, or `FAILED` for critical errors.
 
 ## Current Parser Flow
 
-The parser is deterministic and local. It works only from already discovered `MediaFile` rows and never touches the filesystem.
-
-1. Load the `ScanSession` from SQLite.
-2. Mark the session as `PARSING`.
-3. Select discovered `VIDEO` files.
-4. Parse filenames using local rules for movie years and TV episode patterns such as `S01E01` and `1x02`.
-5. Remove common technical tokens such as `1080p`, `BluRay`, `WEB-DL`, `x264`, and release tags from parsed titles.
-6. Create one `MediaItem` candidate per unlinked video file.
-7. Link each parsed video `MediaFile` to its `MediaItem`.
-8. Mark the session as `PARSED`.
-
-Unknown or low-confidence filenames become `UNKNOWN` items with `NEEDS_REVIEW`. The parser does not call AI or TMDB; those later layers will validate and enrich candidates.
+1. Load the `ScanSession`.
+2. Select discovered `VIDEO` files.
+3. Parse filenames using local rules for movie years and TV episode patterns.
+4. Remove common technical tokens.
+5. Create one `MediaItem` candidate per unlinked video file.
+6. Link each parsed video `MediaFile` to its `MediaItem`.
+7. Mark the session as `PARSED`.
 
 ## Current TMDB Matching Flow
 
-TMDB is the canonical metadata source after local parsing creates a candidate. AI is not used in the matching layer.
-
 1. Load parsed `MediaItem` rows for a scan session.
-2. Match only `MOVIE` and `TV_EPISODE` items with a parsed title.
-3. Search TMDB movies for movies and TMDB TV shows for TV episodes.
-4. Store all returned matches as `TmdbMatchCandidate` rows.
-5. Score candidates using title similarity, exact title bonus, year bonus, and a small popularity bonus.
-6. Automatically select the best candidate when `score >= 0.80`.
-7. Mark uncertain candidates as `NEEDS_REVIEW`.
-8. Mark items with no candidates as `UNMATCHED`.
-
-Candidates are separate from the selected match. Auto-selected matches update `MediaItem.tmdb_id`, `tmdb_media_type`, `matched_title`, `matched_year`, and `match_confidence`. Re-running matching does not duplicate candidates; old candidates for a rematched item are deleted before new candidates are saved.
-
-The TMDB API key is read only from local environment configuration. The app starts without a key, but matching requests return a clear `TMDB_API_KEY is not configured` error until a local key is provided.
+2. Resolve TMDB API key: check `AppSettings.tmdb_api_key` first, then `TMDB_API_KEY` env var.
+3. Search TMDB and score candidates.
+4. Auto-select best candidate when `score >= 0.80`.
+5. Mark uncertain candidates as `NEEDS_REVIEW`, items with no results as `UNMATCHED`.
 
 ## Dry-run Planning Layer
 
-Planning is separated from apply on purpose. Discovery, parsing, and TMDB matching only prepare candidates. Planning turns confirmed `MATCHED` items into a materialized `OperationPlan` stored in SQLite so the user can inspect future filesystem changes before anything is executed.
+Planning is separated from apply. The planner reads `MATCHED` items and builds a `OperationPlan` with `PlanOperation` rows stored in SQLite. No filesystem changes happen.
 
-The planning layer is dry-run only:
+Operations created per item:
+- `CREATE_DIR` — target folder to create
+- `MOVE_FILE` — source video → target library path
+- `WRITE_TEXT_FILE` — future `.nfo` metadata file
+- `DOWNLOAD_FILE` — future poster/backdrop artwork
 
-1. Load the `ScanSession` and its `MATCHED` `MediaItem` rows.
-2. Resolve each item's linked video `MediaFile`.
-3. Build target library paths with the target path builder in `backend/app/utils/target_paths.py`.
-4. Sanitize folder and file names for Windows-safe library layout without changing case or non-Latin titles.
-5. Create an `OperationPlan` with status `DRAFT`, then mark it `READY` after operations are materialized.
-6. Create `PlanOperation` rows for:
-   - `CREATE_DIR` for the destination folder;
-   - `MOVE_FILE` from the discovered source video to the target library path;
-   - `WRITE_TEXT_FILE` for a future `.nfo` file such as `movie.nfo`;
-   - `DOWNLOAD_FILE` for future poster/backdrop artwork when the selected TMDB candidate has image paths.
-7. Return the plan and operations through the API.
+Target paths follow library conventions:
+- Movies: `{target}/Movies/{Title} ({Year})/{Title} ({Year}){ext}`
+- TV episodes: `{target}/TV Shows/{Title}/Season 01/{Title} S01E01{ext}`
 
-Planning never creates folders, moves files, writes NFO files, or downloads artwork. It only records intended operations in the database. Apply and rollback engines will consume these materialized plans later, but they are not implemented yet.
+Apply and rollback are not implemented yet.
 
-### Target Path Builder
+## App Settings
 
-Movies are planned into:
+`AppSettings` is a single-row singleton table (id=1). It stores:
+- `tmdb_api_key` — encrypted at rest by OS; never returned in `GET /settings` response
+- `ai_provider`, `ai_api_key`, `ai_base_url`, `ai_model`
+- `default_source_path`, `default_target_path`
+- `setup_completed` — drives the setup wizard flow
 
-```text
-{target_path}/Movies/{Matched Title} ({Year})/{Matched Title} ({Year}){extension}
-```
+`GET /settings` returns only safe fields: `tmdb_configured: bool`, `ai_configured: bool`, etc.
 
-TV episodes are planned into:
+## Local Secrets Policy
 
-```text
-{target_path}/TV Shows/{Matched Title}/Season 01/{Matched Title} S01E01{extension}
-```
+- API keys and tokens are stored only in `mediaforge.local.sqlite3` (git-ignored) or `.env` (git-ignored).
+- `GET /settings` never exposes raw key values.
+- `.env.example` contains only empty placeholder values.
+- No secrets, user-specific paths, or media files are ever committed.
 
-Episode-level TMDB metadata is not used yet, so episode titles are not part of the planned filename.
+## Filesystem Browser
+
+`GET /filesystem/roots` — returns available drives on Windows, `/` and home on Unix.
+`GET /filesystem/browse?path=...` — returns directory entries for a given path.
+
+The filesystem service is read-only: it lists directories only, never modifies, moves, copies, or deletes anything.
+
+## Setup Wizard
+
+On first launch, the React app calls `GET /settings` and checks `setup_completed`. If `false`, the user is redirected to `/setup` where a 5-step wizard guides through TMDB key, AI provider, and default folders configuration. On completion, `PUT /settings` is called with `setup_completed: true`.
+
+The "Настройки" button in the header always allows returning to the wizard for editing.
+
+## Safe Preview Mode
+
+The entire current UI communicates to users that no files are modified. The session detail page shows a persistent notice: "MediaForge работает в безопасном режиме preview. Файлы не перемещаются и не изменяются."
+
+Apply and rollback workflows are not implemented yet.
 
 ## Web UI Layer
 
-The frontend in `frontend/` is a Vite + React + TypeScript app that calls the existing FastAPI endpoints. It is intentionally minimal on this step:
-
-- create and list scan sessions;
-- open session detail;
-- run discover, parse, TMDB match, and dry-run planning actions;
-- inspect files, parsed items, TMDB candidates, plans, and planned operations;
-- show backend health/status.
-
-The UI does not implement apply, rollback, auth, or filesystem changes. It is a preview and control surface over the read-only pipeline stages already implemented in the backend.
-
-Apply and rollback workflows are still not implemented.
+Frontend is a Vite + React + TypeScript app in `frontend/`. It:
+- communicates with the backend API via `frontend/src/api.ts`
+- is fully Russian-language (`frontend/src/i18n.ts`)
+- uses a folder picker component backed by `/filesystem/browse` and `/filesystem/roots`
+- auto-populates session creation form from `default_source_path` / `default_target_path` settings
+- shows backend health indicator in the header

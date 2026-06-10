@@ -1,3 +1,4 @@
+from .app_settings import AppSettings
 from .enums import (
     MediaFileKind,
     MediaItemStatus,
@@ -15,6 +16,7 @@ from .scan_session import ScanSession
 from .tmdb_match_candidate import TmdbMatchCandidate
 
 __all__ = [
+    "AppSettings",
     "MediaFile",
     "MediaFileKind",
     "MediaItem",

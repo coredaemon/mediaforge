@@ -14,6 +14,7 @@ import {
   matchTmdbSession,
   parseSession,
 } from "../api";
+import { t } from "../i18n";
 import type {
   MediaFile,
   MediaItem,
@@ -24,16 +25,16 @@ import type {
 } from "../types";
 
 function formatDate(value: string): string {
-  return new Date(value).toLocaleString();
+  return new Date(value).toLocaleString("ru-RU");
 }
 
-function formatNumber(value: number | null): string {
-  return value === null ? "—" : String(value);
+function fmt(value: string | number | null | undefined): string {
+  return value === null || value === undefined ? "—" : String(value);
 }
 
 export function SessionDetailPage() {
   const { sessionId } = useParams();
-  const numericSessionId = Number(sessionId);
+  const numId = Number(sessionId);
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [files, setFiles] = useState<MediaFile[]>([]);
@@ -49,203 +50,199 @@ export function SessionDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
-  const loadSessionData = useCallback(async () => {
-    if (!Number.isFinite(numericSessionId)) {
-      setError("Invalid session id");
-      setLoading(false);
-      return;
-    }
-
+  const loadAll = useCallback(async () => {
+    if (!Number.isFinite(numId)) return;
     setLoading(true);
     setError(null);
     try {
-      const [sessionData, filesData, itemsData, plansData] = await Promise.all([
-        getScanSession(numericSessionId),
-        listFiles(numericSessionId),
-        listItems(numericSessionId),
-        listPlans(numericSessionId),
+      const [s, f, i, p] = await Promise.all([
+        getScanSession(numId),
+        listFiles(numId),
+        listItems(numId),
+        listPlans(numId),
       ]);
-      setSession(sessionData);
-      setFiles(filesData);
-      setItems(itemsData);
-      setPlans(plansData);
+      setSession(s);
+      setFiles(f);
+      setItems(i);
+      setPlans(p);
       if (selectedPlanId !== null) {
-        const ops = await listPlanOperations(selectedPlanId);
-        setOperations(ops);
+        setOperations(await listPlanOperations(selectedPlanId));
       }
       if (selectedItemId !== null) {
-        const itemCandidates = await listTmdbCandidates(selectedItemId);
-        setCandidates(itemCandidates);
+        setCandidates(await listTmdbCandidates(selectedItemId));
       }
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to load session details";
-      setError(message);
+      setError(err instanceof ApiError ? err.message : "Ошибка загрузки сессии");
     } finally {
       setLoading(false);
     }
-  }, [numericSessionId, selectedItemId, selectedPlanId]);
+  }, [numId, selectedPlanId, selectedItemId]);
 
   useEffect(() => {
-    void loadSessionData();
-  }, [loadSessionData]);
+    void loadAll();
+  }, [loadAll]);
 
-  async function runAction(actionName: string, action: () => Promise<unknown>, successMessage: string) {
-    setActionLoading(actionName);
+  async function runAction(key: string, action: () => Promise<unknown>, msg: string) {
+    setActionLoading(key);
     setError(null);
     setInfo(null);
     try {
       await action();
-      setInfo(successMessage);
-      await loadSessionData();
+      setInfo(msg);
+      await loadAll();
     } catch (err) {
-      const rawMessage = err instanceof ApiError ? err.message : `Failed to run ${actionName}`;
-      setError(formatTmdbError(rawMessage));
+      const raw = err instanceof ApiError ? err.message : `Ошибка: ${key}`;
+      setError(formatTmdbError(raw));
     } finally {
       setActionLoading(null);
     }
   }
 
-  async function handleShowCandidates(itemId: number) {
+  async function showCandidates(itemId: number) {
     setSelectedItemId(itemId);
-    setError(null);
     try {
-      const itemCandidates = await listTmdbCandidates(itemId);
-      setCandidates(itemCandidates);
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to load TMDB candidates";
-      setError(message);
+      setCandidates(await listTmdbCandidates(itemId));
+    } catch {
       setCandidates([]);
     }
   }
 
-  async function handleShowOperations(planId: number) {
+  async function showOperations(planId: number) {
     setSelectedPlanId(planId);
-    setError(null);
     try {
-      const ops = await listPlanOperations(planId);
-      setOperations(ops);
-    } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to load plan operations";
-      setError(message);
+      setOperations(await listPlanOperations(planId));
+    } catch {
       setOperations([]);
     }
   }
 
-  if (!Number.isFinite(numericSessionId)) {
-    return <div className="message error">Invalid session id.</div>;
+  if (!Number.isFinite(numId)) {
+    return <div className="message error">Неверный ID сессии.</div>;
   }
+
+  const busy = actionLoading !== null;
 
   return (
     <div>
       <p>
-        <Link to="/">← Back to sessions</Link>
+        <Link to="/">{t.detail.backToSessions}</Link>
       </p>
 
       {error ? <div className="message error">{error}</div> : null}
       {info ? <div className="message info">{info}</div> : null}
 
+      <div className="safety-notice">🛡 {t.detail.safetyNotice}</div>
+
       <section className="panel">
-        <h2>Session #{numericSessionId}</h2>
-        {loading && !session ? <p className="muted">Loading session...</p> : null}
+        <h2>
+          {t.detail.sessionTitle}
+          {numId}
+        </h2>
+        {loading && !session ? <p className="muted">{t.common.loading}</p> : null}
         {session ? (
           <>
             <div className="summary-grid">
               <div className="summary-item">
-                <strong>Source path</strong>
+                <strong>{t.detail.sourceFolder}</strong>
                 <span>{session.source_path}</span>
               </div>
               <div className="summary-item">
-                <strong>Target path</strong>
+                <strong>{t.detail.targetFolder}</strong>
                 <span>{session.target_path}</span>
               </div>
               <div className="summary-item">
-                <strong>Status</strong>
+                <strong>{t.detail.status}</strong>
                 <span>{session.status}</span>
               </div>
               <div className="summary-item">
-                <strong>Updated</strong>
+                <strong>{t.detail.updated}</strong>
                 <span>{formatDate(session.updated_at)}</span>
               </div>
             </div>
             {session.error_message ? (
-              <p className="message error" style={{ marginTop: "1rem" }}>
+              <div className="message error" style={{ marginTop: "1rem" }}>
                 {session.error_message}
-              </p>
+              </div>
             ) : null}
-            <div className="form-actions" style={{ marginTop: "1rem" }}>
-              <button
-                type="button"
-                disabled={actionLoading !== null}
-                onClick={() =>
-                  void runAction("discover", () => discoverSession(numericSessionId), "Discovery completed.")
-                }
-              >
-                {actionLoading === "discover" ? "Discovering..." : "Discover"}
-              </button>
-              <button
-                type="button"
-                disabled={actionLoading !== null}
-                onClick={() =>
-                  void runAction("parse", () => parseSession(numericSessionId), "Parsing completed.")
-                }
-              >
-                {actionLoading === "parse" ? "Parsing..." : "Parse"}
-              </button>
-              <button
-                type="button"
-                disabled={actionLoading !== null}
-                onClick={() =>
-                  void runAction(
-                    "match-tmdb",
-                    () => matchTmdbSession(numericSessionId),
-                    "TMDB matching completed.",
-                  )
-                }
-              >
-                {actionLoading === "match-tmdb" ? "Matching..." : "Match TMDB"}
-              </button>
-              <button
-                type="button"
-                disabled={actionLoading !== null}
-                onClick={() =>
-                  void runAction("create-plan", () => createPlan(numericSessionId), "Dry-run plan created.")
-                }
-              >
-                {actionLoading === "create-plan" ? "Planning..." : "Create Plan"}
-              </button>
+
+            {/* Pipeline action buttons */}
+            <div style={{ marginTop: "1.25rem" }}>
+              <div className="pipeline-actions">
+                <span className="step-label">1.</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction("discover", () => discoverSession(numId), "Сканирование завершено.")
+                  }
+                >
+                  {actionLoading === "discover" ? t.detail.discovering : t.detail.discover}
+                </button>
+                <span className="step-label">2.</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction("parse", () => parseSession(numId), "Распознавание завершено.")
+                  }
+                >
+                  {actionLoading === "parse" ? t.detail.parsing : t.detail.parse}
+                </button>
+                <span className="step-label">3.</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction("match-tmdb", () => matchTmdbSession(numId), "Поиск TMDB завершён.")
+                  }
+                >
+                  {actionLoading === "match-tmdb" ? t.detail.matchingTmdb : t.detail.matchTmdb}
+                </button>
+                <span className="step-label">4.</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void runAction("create-plan", () => createPlan(numId), "План построен.")
+                  }
+                >
+                  {actionLoading === "create-plan" ? t.detail.planning : t.detail.createPlan}
+                </button>
+              </div>
             </div>
           </>
         ) : null}
       </section>
 
+      {/* Files */}
       <section className="panel">
-        <h3>Files</h3>
-        {loading ? <p className="muted">Loading files...</p> : null}
-        {!loading && files.length === 0 ? <p className="muted">No files discovered yet.</p> : null}
+        <h3>{t.detail.filesSection}</h3>
+        {loading ? <p className="muted">{t.common.loading}</p> : null}
+        {!loading && files.length === 0 ? <p className="muted">{t.detail.noFiles}</p> : null}
         {files.length > 0 ? (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Kind</th>
-                  <th>File name</th>
-                  <th>Extension</th>
-                  <th>Size</th>
-                  <th>Media item</th>
-                  <th>Scan error</th>
+                  <th>{t.detail.kind}</th>
+                  <th>{t.detail.fileName}</th>
+                  <th>{t.detail.extension}</th>
+                  <th>{t.detail.size}</th>
+                  <th>{t.detail.mediaItem}</th>
+                  <th>{t.detail.scanError}</th>
                 </tr>
               </thead>
               <tbody>
-                {files.map((file) => (
-                  <tr key={file.id}>
-                    <td>{file.id}</td>
-                    <td>{file.kind}</td>
-                    <td>{file.file_name}</td>
-                    <td>{file.extension}</td>
-                    <td>{formatNumber(file.size_bytes)}</td>
-                    <td>{formatNumber(file.media_item_id)}</td>
-                    <td>{file.scan_error ?? "—"}</td>
+                {files.map((f) => (
+                  <tr key={f.id}>
+                    <td>{f.id}</td>
+                    <td>{f.kind}</td>
+                    <td>{f.file_name}</td>
+                    <td>{f.extension}</td>
+                    <td>{fmt(f.size_bytes)}</td>
+                    <td>{fmt(f.media_item_id)}</td>
+                    <td>{f.scan_error ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -254,27 +251,26 @@ export function SessionDetailPage() {
         ) : null}
       </section>
 
+      {/* Items */}
       <section className="panel">
-        <h3>Items</h3>
-        {loading ? <p className="muted">Loading items...</p> : null}
-        {!loading && items.length === 0 ? <p className="muted">No parsed items yet.</p> : null}
+        <h3>{t.detail.itemsSection}</h3>
+        {loading ? <p className="muted">{t.common.loading}</p> : null}
+        {!loading && items.length === 0 ? <p className="muted">{t.detail.noItems}</p> : null}
         {items.length > 0 ? (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Parsed title</th>
-                  <th>Year</th>
-                  <th>Season</th>
-                  <th>Episode</th>
-                  <th>TMDB ID</th>
-                  <th>Matched title</th>
-                  <th>Matched year</th>
-                  <th>Confidence</th>
-                  <th>Needs review</th>
+                  <th>{t.detail.mediaType}</th>
+                  <th>{t.detail.status}</th>
+                  <th>{t.detail.parsedTitle}</th>
+                  <th>{t.detail.year}</th>
+                  <th>{t.detail.season}</th>
+                  <th>{t.detail.episode}</th>
+                  <th>{t.detail.tmdbId}</th>
+                  <th>{t.detail.matchedTitle}</th>
+                  <th>{t.detail.confidence}</th>
                   <th />
                 </tr>
               </thead>
@@ -285,17 +281,15 @@ export function SessionDetailPage() {
                     <td>{item.media_type}</td>
                     <td>{item.status}</td>
                     <td>{item.parsed_title ?? "—"}</td>
-                    <td>{formatNumber(item.year)}</td>
-                    <td>{formatNumber(item.season_number)}</td>
-                    <td>{formatNumber(item.episode_number)}</td>
-                    <td>{formatNumber(item.tmdb_id)}</td>
+                    <td>{fmt(item.year)}</td>
+                    <td>{fmt(item.season_number)}</td>
+                    <td>{fmt(item.episode_number)}</td>
+                    <td>{fmt(item.tmdb_id)}</td>
                     <td>{item.matched_title ?? "—"}</td>
-                    <td>{formatNumber(item.matched_year)}</td>
-                    <td>{formatNumber(item.match_confidence)}</td>
-                    <td>{item.needs_review ? "yes" : "no"}</td>
+                    <td>{fmt(item.match_confidence)}</td>
                     <td>
-                      <button type="button" onClick={() => void handleShowCandidates(item.id)}>
-                        Show TMDB candidates
+                      <button type="button" onClick={() => void showCandidates(item.id)}>
+                        {t.detail.showCandidates}
                       </button>
                     </td>
                   </tr>
@@ -306,30 +300,31 @@ export function SessionDetailPage() {
         ) : null}
         {selectedItemId !== null ? (
           <div className="candidates-block">
-            <h4>TMDB candidates for item #{selectedItemId}</h4>
-            {candidates.length === 0 ? <p className="muted">No candidates loaded.</p> : null}
+            <h4>
+              {t.detail.tmdbCandidatesFor}
+              {selectedItemId}
+            </h4>
+            {candidates.length === 0 ? <p className="muted">{t.detail.noCandidates}</p> : null}
             {candidates.length > 0 ? (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>ID</th>
                       <th>TMDB ID</th>
-                      <th>Title</th>
-                      <th>Year</th>
-                      <th>Score</th>
-                      <th>Selected</th>
+                      <th>{t.detail.matchedTitle}</th>
+                      <th>{t.detail.year}</th>
+                      <th>{t.detail.score}</th>
+                      <th>{t.detail.selected}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {candidates.map((candidate) => (
-                      <tr key={candidate.id}>
-                        <td>{candidate.id}</td>
-                        <td>{candidate.tmdb_id}</td>
-                        <td>{candidate.title}</td>
-                        <td>{formatNumber(candidate.year)}</td>
-                        <td>{candidate.score}</td>
-                        <td>{candidate.is_selected ? "yes" : "no"}</td>
+                    {candidates.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.tmdb_id}</td>
+                        <td>{c.title}</td>
+                        <td>{fmt(c.year)}</td>
+                        <td>{c.score.toFixed(2)}</td>
+                        <td>{c.is_selected ? "✓" : ""}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -340,19 +335,19 @@ export function SessionDetailPage() {
         ) : null}
       </section>
 
+      {/* Plans */}
       <section className="panel">
-        <h3>Plans</h3>
-        {loading ? <p className="muted">Loading plans...</p> : null}
-        {!loading && plans.length === 0 ? <p className="muted">No dry-run plans yet.</p> : null}
+        <h3>{t.detail.plansSection}</h3>
+        {loading ? <p className="muted">{t.common.loading}</p> : null}
+        {!loading && plans.length === 0 ? <p className="muted">{t.detail.noPlans}</p> : null}
         {plans.length > 0 ? (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Updated</th>
+                  <th>{t.detail.planStatus}</th>
+                  <th>{t.sessions.created}</th>
                   <th />
                 </tr>
               </thead>
@@ -362,10 +357,9 @@ export function SessionDetailPage() {
                     <td>{plan.id}</td>
                     <td>{plan.status}</td>
                     <td>{formatDate(plan.created_at)}</td>
-                    <td>{formatDate(plan.updated_at)}</td>
                     <td>
-                      <button type="button" onClick={() => void handleShowOperations(plan.id)}>
-                        Show operations
+                      <button type="button" onClick={() => void showOperations(plan.id)}>
+                        {t.detail.showOperations}
                       </button>
                     </td>
                   </tr>
@@ -376,42 +370,44 @@ export function SessionDetailPage() {
         ) : null}
       </section>
 
+      {/* Operations */}
       <section className="panel">
-        <h3>Operations</h3>
+        <h3>{t.detail.operationsSection}</h3>
         {selectedPlanId === null ? (
-          <p className="muted">Select a plan to view its operations.</p>
-        ) : null}
-        {selectedPlanId !== null && operations.length === 0 ? (
-          <p className="muted">No operations loaded for plan #{selectedPlanId}.</p>
-        ) : null}
-        {operations.length > 0 ? (
+          <p className="muted">{t.detail.noOperations}</p>
+        ) : operations.length === 0 ? (
+          <p className="muted">
+            {t.detail.operationsForPlan}
+            {selectedPlanId} — нет операций.
+          </p>
+        ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>ID</th>
-                  <th>Type</th>
-                  <th>Status</th>
-                  <th>Source path</th>
-                  <th>Target path</th>
-                  <th>Error</th>
+                  <th>{t.detail.operationType}</th>
+                  <th>{t.detail.status}</th>
+                  <th>{t.detail.sourcePath}</th>
+                  <th>{t.detail.targetPath}</th>
+                  <th>{t.detail.scanError}</th>
                 </tr>
               </thead>
               <tbody>
-                {operations.map((operation) => (
-                  <tr key={operation.id}>
-                    <td>{operation.id}</td>
-                    <td>{operation.operation_type}</td>
-                    <td>{operation.status}</td>
-                    <td>{operation.source_path ?? "—"}</td>
-                    <td>{operation.target_path ?? "—"}</td>
-                    <td>{operation.error_message ?? "—"}</td>
+                {operations.map((op) => (
+                  <tr key={op.id}>
+                    <td>{op.id}</td>
+                    <td>{op.operation_type}</td>
+                    <td>{op.status}</td>
+                    <td className="path-text">{op.source_path ?? "—"}</td>
+                    <td className="path-text">{op.target_path ?? "—"}</td>
+                    <td>{op.error_message ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : null}
+        )}
       </section>
     </div>
   );

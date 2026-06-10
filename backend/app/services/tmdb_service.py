@@ -4,6 +4,7 @@ from ..core.config import get_settings
 from ..models.enums import MediaItemStatus, MediaType
 from ..models.media_item import MediaItem
 from ..models.tmdb_match_candidate import TmdbMatchCandidate
+from ..repositories.app_settings_repository import AppSettingsRepository
 from ..repositories.media_item_repository import MediaItemRepository
 from ..repositories.scan_session_repository import ScanSessionRepository
 from ..repositories.tmdb_match_candidate_repository import TmdbMatchCandidateRepository
@@ -29,7 +30,11 @@ class TMDBService:
             raise ScanSessionNotFoundError(f"Scan session {session_id} was not found.")
 
         if isinstance(self.client, TmdbClient) and not self.client.api_key:
-            raise TmdbApiKeyMissingError("TMDB_API_KEY is not configured")
+            app_settings = await AppSettingsRepository(self.session).get_or_create()
+            if app_settings.tmdb_api_key:
+                self.client = TmdbClient(app_settings.tmdb_api_key)
+            else:
+                raise TmdbApiKeyMissingError("TMDB_API_KEY is not configured")
 
         matched_count = 0
         needs_review_count = 0
