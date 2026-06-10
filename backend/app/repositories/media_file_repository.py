@@ -37,3 +37,12 @@ class MediaFileRepository:
 
     async def delete_for_scan_session(self, scan_session_id: int) -> None:
         await self.session.execute(delete(MediaFile).where(MediaFile.scan_session_id == scan_session_id))
+
+    async def get_video_for_media_item(self, media_item_id: int) -> MediaFile | None:
+        result = await self.session.execute(
+            select(MediaFile)
+            .where(MediaFile.media_item_id == media_item_id, MediaFile.kind == MediaFileKind.VIDEO)
+            .order_by(MediaFile.id.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

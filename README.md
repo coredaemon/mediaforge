@@ -15,7 +15,7 @@ The first implementation path is:
 5. Preview and safely apply approved file operations.
 6. Roll back applied operations when needed.
 
-The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, parse video filenames into first-pass `MediaItem` candidates, match those candidates against TMDB, and return the result through the API. Discovery, parsing, and matching are read-only: they do not move, delete, or modify media files.
+The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, parse video filenames into first-pass `MediaItem` candidates, match those candidates against TMDB, build a dry-run operation plan for matched items, and return the result through the API. Discovery, parsing, matching, and planning are read-only: they do not move, delete, or modify media files.
 
 ## Quick Start
 
@@ -100,6 +100,30 @@ List TMDB candidates for an item:
 curl http://127.0.0.1:8000/items/1/tmdb-candidates
 ```
 
+Create a dry-run operation plan:
+
+```bash
+curl -X POST http://127.0.0.1:8000/scan-sessions/1/plan
+```
+
+List plans for a scan session:
+
+```bash
+curl http://127.0.0.1:8000/scan-sessions/1/plans
+```
+
+Get a plan:
+
+```bash
+curl http://127.0.0.1:8000/operation-plans/1
+```
+
+List planned operations:
+
+```bash
+curl http://127.0.0.1:8000/operation-plans/1/operations
+```
+
 ## Local Workflow
 
 1. Initialize the DB with `python -m backend.scripts.init_db`.
@@ -108,9 +132,13 @@ curl http://127.0.0.1:8000/items/1/tmdb-candidates
 4. Discover source files with `POST /scan-sessions/{id}/discover`.
 5. Parse video filenames with `POST /scan-sessions/{id}/parse`.
 6. Match parsed candidates with `POST /scan-sessions/{id}/match-tmdb`.
-7. Inspect discovered files with `GET /scan-sessions/{id}/files`.
-8. Inspect parsed items with `GET /scan-sessions/{id}/items`.
-9. Inspect TMDB candidates with `GET /items/{item_id}/tmdb-candidates`.
+7. Create a dry-run plan with `POST /scan-sessions/{id}/plan`.
+8. Inspect planned operations with `GET /operation-plans/{plan_id}/operations`.
+9. Inspect discovered files with `GET /scan-sessions/{id}/files`.
+10. Inspect parsed items with `GET /scan-sessions/{id}/items`.
+11. Inspect TMDB candidates with `GET /items/{item_id}/tmdb-candidates`.
+
+Planning is dry-run only. No files are moved, copied, deleted, or written yet. Apply and rollback are not implemented.
 
 ## TMDB Key
 

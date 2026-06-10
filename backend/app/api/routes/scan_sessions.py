@@ -6,14 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...db.session import get_session
 from ...models.media_file import MediaFile
 from ...models.media_item import MediaItem
+from ...models.operation_plan import OperationPlan
 from ...models.scan_session import ScanSession
 from ...repositories.media_file_repository import MediaFileRepository
 from ...repositories.media_item_repository import MediaItemRepository
 from ...schemas.media_file import MediaFileRead
 from ...schemas.media_item import MediaItemRead
+from ...schemas.operation_plan import OperationPlanRead
 from ...schemas.scan_session import ScanSessionCreate, ScanSessionListItem, ScanSessionRead
 from ...schemas.tmdb import TmdbMatchResult
 from ...services.parser_service import ParserService
+from ...services.planning_service import NoMatchedItemsError, PlanningService
 from ...services.scan_session_service import ScanSessionNotFoundError, ScanSessionService
 from ...services.scanner_service import ScannerService
 from ...services.tmdb_client import TmdbApiKeyMissingError, TmdbClientProtocol
@@ -106,3 +109,28 @@ async def match_scan_session_tmdb(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TmdbApiKeyMissingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/plan", response_model=OperationPlanRead)
+async def create_scan_session_plan(
+    session_id: int,
+    force: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> OperationPlanRead:
+    try:
+        return await PlanningService(session).create_plan_for_scan_session(session_id, force=force)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except NoMatchedItemsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{session_id}/plans", response_model=list[OperationPlanRead])
+async def list_scan_session_plans(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Sequence[OperationPlan]:
+    try:
+        return await PlanningService(session).list_plans_for_scan_session(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

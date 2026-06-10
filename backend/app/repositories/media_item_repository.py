@@ -37,3 +37,14 @@ class MediaItemRepository:
             .order_by(MediaItem.id.asc())
         )
         return result.scalars().all()
+
+    async def list_matched_by_scan_session(self, scan_session_id: int) -> Sequence[MediaItem]:
+        result = await self.session.execute(
+            select(MediaItem)
+            .where(
+                MediaItem.scan_session_id == scan_session_id,
+                MediaItem.status == MediaItemStatus.MATCHED,
+            )
+            .order_by(MediaItem.id.asc())
+        )
+        return result.scalars().all()

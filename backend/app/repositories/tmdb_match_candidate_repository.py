@@ -27,3 +27,14 @@ class TmdbMatchCandidateRepository:
         await self.session.execute(
             delete(TmdbMatchCandidate).where(TmdbMatchCandidate.media_item_id == media_item_id)
         )
+
+    async def get_selected_for_media_item(self, media_item_id: int) -> TmdbMatchCandidate | None:
+        result = await self.session.execute(
+            select(TmdbMatchCandidate)
+            .where(
+                TmdbMatchCandidate.media_item_id == media_item_id,
+                TmdbMatchCandidate.is_selected.is_(True),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

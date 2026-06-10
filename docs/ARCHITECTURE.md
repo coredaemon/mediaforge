@@ -32,7 +32,8 @@ The pipeline is intentionally staged so discovery and planning can be inspected 
 - `ScanSession` stores source and target paths, lifecycle status, timestamps, and errors.
 - `MediaFile` stores discovered file paths, names, extensions, sizes, classification, and scan errors.
 - `MediaItem` stores parsed movie, TV episode, or unknown local candidates.
-- `OperationPlan` and `PlanOperation` are reserved for future dry-run/apply/rollback workflows.
+- `OperationPlan` stores a materialized dry-run plan for a scan session.
+- `PlanOperation` stores one planned filesystem or metadata action such as `CREATE_DIR`, `MOVE_FILE`, `WRITE_TEXT_FILE`, or `DOWNLOAD_FILE`.
 
 ## Current Scanner Flow
 
@@ -80,4 +81,40 @@ Candidates are separate from the selected match. Auto-selected matches update `M
 
 The TMDB API key is read only from local environment configuration. The app starts without a key, but matching requests return a clear `TMDB_API_KEY is not configured` error until a local key is provided.
 
-Apply, rollback, poster download, NFO generation, and frontend workflows are still not implemented.
+## Dry-run Planning Layer
+
+Planning is separated from apply on purpose. Discovery, parsing, and TMDB matching only prepare candidates. Planning turns confirmed `MATCHED` items into a materialized `OperationPlan` stored in SQLite so the user can inspect future filesystem changes before anything is executed.
+
+The planning layer is dry-run only:
+
+1. Load the `ScanSession` and its `MATCHED` `MediaItem` rows.
+2. Resolve each item's linked video `MediaFile`.
+3. Build target library paths with the target path builder in `backend/app/utils/target_paths.py`.
+4. Sanitize folder and file names for Windows-safe library layout without changing case or non-Latin titles.
+5. Create an `OperationPlan` with status `DRAFT`, then mark it `READY` after operations are materialized.
+6. Create `PlanOperation` rows for:
+   - `CREATE_DIR` for the destination folder;
+   - `MOVE_FILE` from the discovered source video to the target library path;
+   - `WRITE_TEXT_FILE` for a future `.nfo` file such as `movie.nfo`;
+   - `DOWNLOAD_FILE` for future poster/backdrop artwork when the selected TMDB candidate has image paths.
+7. Return the plan and operations through the API.
+
+Planning never creates folders, moves files, writes NFO files, or downloads artwork. It only records intended operations in the database. Apply and rollback engines will consume these materialized plans later, but they are not implemented yet.
+
+### Target Path Builder
+
+Movies are planned into:
+
+```text
+{target_path}/Movies/{Matched Title} ({Year})/{Matched Title} ({Year}){extension}
+```
+
+TV episodes are planned into:
+
+```text
+{target_path}/TV Shows/{Matched Title}/Season 01/{Matched Title} S01E01{extension}
+```
+
+Episode-level TMDB metadata is not used yet, so episode titles are not part of the planned filename.
+
+Apply, rollback, and frontend workflows are still not implemented.
