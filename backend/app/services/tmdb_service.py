@@ -1,0 +1,1 @@
+"""TMDB metadata service placeholder."""

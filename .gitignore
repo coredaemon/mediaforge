@@ -1,0 +1,44 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs, caches, and temporary application data
+logs/
+*.log
+cache/
+tmp/
+temp/
+var/
+runtime/
+.pytest_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Editors
+.idea/
+.vscode/
+
+# Frontend and build output
+node_modules/
+dist/
+build/
+
+# Media files
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flac
+*.mp3
