@@ -14,8 +14,25 @@ function normalisePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
-const SAME_FOLDER_MSG =
-  "Папка с файлами и папка медиатеки совпадают. Выберите разные папки, чтобы не смешивать исходники и результат.";
+/** Returns a validation error message if paths conflict, otherwise null. */
+function detectPathConflict(source: string, target: string): string | null {
+  if (!source.trim() || !target.trim()) return null;
+  const s = normalisePath(source);
+  const tgt = normalisePath(target);
+  if (s === tgt) {
+    return "Папка с файлами и папка медиатеки не должны совпадать. Выберите отдельную папку для результата.";
+  }
+  if (tgt.startsWith(s + "/")) {
+    return (
+      "Папка медиатеки находится внутри папки с файлами. " +
+      "Выберите отдельную папку, иначе MediaForge может повторно сканировать уже обработанные файлы."
+    );
+  }
+  if (s.startsWith(tgt + "/")) {
+    return "Папка с файлами находится внутри папки медиатеки. Выберите отдельную папку с исходниками.";
+  }
+  return null;
+}
 
 export function SessionsPage() {
   const [sessions, setSessions] = useState<ScanSession[]>([]);
@@ -64,8 +81,9 @@ export function SessionsPage() {
       setFormError("Укажите целевую папку медиатеки.");
       return;
     }
-    if (normalisePath(sourcePath) === normalisePath(targetPath)) {
-      setFormError(SAME_FOLDER_MSG);
+    const conflictMsg = detectPathConflict(sourcePath, targetPath);
+    if (conflictMsg) {
+      setFormError(conflictMsg);
       return;
     }
 
@@ -116,12 +134,9 @@ export function SessionsPage() {
               </button>
             </div>
           </label>
-          {/* Real-time warning when both paths are filled but identical */}
-          {sourcePath &&
-          targetPath &&
-          !formError &&
-          normalisePath(sourcePath) === normalisePath(targetPath) ? (
-            <div className="message warning">{SAME_FOLDER_MSG}</div>
+          {/* Real-time warning for path conflicts */}
+          {sourcePath && targetPath && !formError && detectPathConflict(sourcePath, targetPath) ? (
+            <div className="message warning">{detectPathConflict(sourcePath, targetPath)}</div>
           ) : null}
           {formError ? <div className="message error">{formError}</div> : null}
           {successMsg ? <div className="message success">{successMsg}</div> : null}

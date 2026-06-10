@@ -22,17 +22,18 @@ CORS_ORIGINS = [
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
-    """Auto-create DB tables on startup so users don't need to run init_db manually."""
+    """Auto-create tables and apply column migrations on startup."""
     try:
         from .db.base import Base, import_models
         from .db.session import engine
+        from backend.scripts.init_db import _apply_column_migrations
 
         import_models()  # registers all models with Base.metadata
-
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _apply_column_migrations(conn)
     except Exception:
-        logger.warning("Could not auto-initialise database tables", exc_info=True)
+        logger.warning("Could not auto-initialise database", exc_info=True)
     yield
 
 

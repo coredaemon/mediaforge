@@ -32,6 +32,24 @@ function fmt(value: string | number | null | undefined): string {
   return value === null || value === undefined ? "—" : String(value);
 }
 
+/** Normalise a path for comparison: forward slashes, trim trailing slash, lower-case. */
+function normalisePath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function detectPathNestingWarning(source: string, target: string): string | null {
+  const s = normalisePath(source);
+  const t_ = normalisePath(target);
+  if (s === t_) return null; // same path — handled at creation time
+  if (t_.startsWith(s + "/")) {
+    return "Папка медиатеки находится внутри папки с файлами. Для новых сессий такой вариант будет запрещён.";
+  }
+  if (s.startsWith(t_ + "/")) {
+    return "Папка с файлами находится внутри папки медиатеки. Для новых сессий такой вариант будет запрещён.";
+  }
+  return null;
+}
+
 export function SessionDetailPage() {
   const { sessionId } = useParams();
   const numId = Number(sessionId);
@@ -48,34 +66,67 @@ export function SessionDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const [itemsError, setItemsError] = useState<string | null>(null);
+  const [plansError, setPlansError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
   const loadAll = useCallback(async () => {
     if (!Number.isFinite(numId)) return;
     setLoading(true);
     setError(null);
+    setFilesError(null);
+    setItemsError(null);
+    setPlansError(null);
+
+    // Load session itself first — if this fails, the whole page is broken.
+    let s: (typeof session);
     try {
-      const [s, f, i, p] = await Promise.all([
-        getScanSession(numId),
-        listFiles(numId),
-        listItems(numId),
-        listPlans(numId),
-      ]);
+      s = await getScanSession(numId);
       setSession(s);
-      setFiles(f);
-      setItems(i);
-      setPlans(p);
-      if (selectedPlanId !== null) {
-        setOperations(await listPlanOperations(selectedPlanId));
-      }
-      if (selectedItemId !== null) {
-        setCandidates(await listTmdbCandidates(selectedItemId));
-      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Ошибка загрузки сессии");
-    } finally {
+      setError(err instanceof Error ? err.message : "Ошибка загрузки сессии");
       setLoading(false);
+      return;
     }
+
+    // Secondary sections load independently so one failure doesn't break the others.
+    const [filesResult, itemsResult, plansResult] = await Promise.allSettled([
+      listFiles(numId),
+      listItems(numId),
+      listPlans(numId),
+    ]);
+
+    if (filesResult.status === "fulfilled") {
+      setFiles(filesResult.value);
+    } else {
+      setFilesError(filesResult.reason instanceof Error ? filesResult.reason.message : "Ошибка загрузки файлов");
+    }
+
+    if (itemsResult.status === "fulfilled") {
+      setItems(itemsResult.value);
+    } else {
+      setItemsError(itemsResult.reason instanceof Error ? itemsResult.reason.message : "Ошибка загрузки элементов");
+    }
+
+    if (plansResult.status === "fulfilled") {
+      setPlans(plansResult.value);
+    } else {
+      setPlansError(plansResult.reason instanceof Error ? plansResult.reason.message : "Ошибка загрузки планов");
+    }
+
+    if (selectedPlanId !== null) {
+      try {
+        setOperations(await listPlanOperations(selectedPlanId));
+      } catch { /* keep previous operations */ }
+    }
+    if (selectedItemId !== null) {
+      try {
+        setCandidates(await listTmdbCandidates(selectedItemId));
+      } catch { /* keep previous candidates */ }
+    }
+
+    setLoading(false);
   }, [numId, selectedPlanId, selectedItemId]);
 
   useEffect(() => {
@@ -141,6 +192,11 @@ export function SessionDetailPage() {
         {loading && !session ? <p className="muted">{t.common.loading}</p> : null}
         {session ? (
           <>
+            {detectPathNestingWarning(session.source_path, session.target_path) ? (
+              <div className="message warning" style={{ marginBottom: "0.75rem" }}>
+                {detectPathNestingWarning(session.source_path, session.target_path)}
+              </div>
+            ) : null}
             <div className="summary-grid">
               <div className="summary-item">
                 <strong>{t.detail.sourceFolder}</strong>
@@ -218,7 +274,8 @@ export function SessionDetailPage() {
       <section className="panel">
         <h3>{t.detail.filesSection}</h3>
         {loading ? <p className="muted">{t.common.loading}</p> : null}
-        {!loading && files.length === 0 ? <p className="muted">{t.detail.noFiles}</p> : null}
+        {!loading && filesError ? <div className="message error">{filesError}</div> : null}
+        {!loading && !filesError && files.length === 0 ? <p className="muted">{t.detail.noFiles}</p> : null}
         {files.length > 0 ? (
           <div className="table-wrap">
             <table>
@@ -255,7 +312,8 @@ export function SessionDetailPage() {
       <section className="panel">
         <h3>{t.detail.itemsSection}</h3>
         {loading ? <p className="muted">{t.common.loading}</p> : null}
-        {!loading && items.length === 0 ? <p className="muted">{t.detail.noItems}</p> : null}
+        {!loading && itemsError ? <div className="message error">{itemsError}</div> : null}
+        {!loading && !itemsError && items.length === 0 ? <p className="muted">{t.detail.noItems}</p> : null}
         {items.length > 0 ? (
           <div className="table-wrap">
             <table>
@@ -339,7 +397,8 @@ export function SessionDetailPage() {
       <section className="panel">
         <h3>{t.detail.plansSection}</h3>
         {loading ? <p className="muted">{t.common.loading}</p> : null}
-        {!loading && plans.length === 0 ? <p className="muted">{t.detail.noPlans}</p> : null}
+        {!loading && plansError ? <div className="message error">{plansError}</div> : null}
+        {!loading && !plansError && plans.length === 0 ? <p className="muted">{t.detail.noPlans}</p> : null}
         {plans.length > 0 ? (
           <div className="table-wrap">
             <table>

@@ -43,9 +43,24 @@ function normalisePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
-function pathsAreSame(a: string, b: string): boolean {
-  if (!a || !b) return false;
-  return normalisePath(a) === normalisePath(b);
+/** Returns a validation error if paths conflict (same, or one contains the other), else null. */
+function detectPathConflict(source: string, target: string): string | null {
+  if (!source.trim() || !target.trim()) return null;
+  const s = normalisePath(source);
+  const tgt = normalisePath(target);
+  if (s === tgt) {
+    return "Папка с файлами и папка медиатеки не должны совпадать. Выберите отдельную папку для результата.";
+  }
+  if (tgt.startsWith(s + "/")) {
+    return (
+      "Папка медиатеки находится внутри папки с файлами. " +
+      "Выберите отдельную папку, иначе MediaForge может повторно сканировать уже обработанные файлы."
+    );
+  }
+  if (s.startsWith(tgt + "/")) {
+    return "Папка с файлами находится внутри папки медиатеки. Выберите отдельную папку с исходниками.";
+  }
+  return null;
 }
 
 export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) {
@@ -95,13 +110,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Computed: are the folder paths the same (after normalisation)?
-  const foldersConflict =
-    data.sourcePath.trim() !== "" &&
-    data.targetPath.trim() !== "" &&
-    pathsAreSame(data.sourcePath, data.targetPath);
-  const folderErrorMsg =
-    "Папка с файлами и папка медиатеки не должны совпадать. Выберите отдельную папку для результата.";
+  // Computed: conflict message if paths are identical or nested, null if ok.
+  const folderConflictMsg = detectPathConflict(data.sourcePath, data.targetPath);
+  const foldersConflict = folderConflictMsg !== null;
 
   function update(patch: Partial<WizardData>) {
     setData((prev) => ({ ...prev, ...patch }));
@@ -167,7 +178,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
 
   async function handleSave() {
     if (foldersConflict) {
-      setSaveError(folderErrorMsg);
+      setSaveError(folderConflictMsg ?? "Проверьте папки.");
       return;
     }
     setSaving(true);
@@ -472,7 +483,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                 </div>
               </label>
               {foldersConflict ? (
-                <div className="message warning">{folderErrorMsg}</div>
+                <div className="message warning">{folderConflictMsg}</div>
               ) : null}
             </div>
             <div className="form-actions wizard-nav">
@@ -482,7 +493,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
               <button
                 type="button"
                 disabled={foldersConflict}
-                title={foldersConflict ? folderErrorMsg : undefined}
+                title={foldersConflict ? folderConflictMsg : undefined}
                 onClick={() => setStep(5)}
               >
                 {t.common.next}

@@ -30,24 +30,52 @@ def get_tmdb_client() -> TmdbClientProtocol | None:
     return None
 
 
+def _is_subpath(child: Path, parent: Path) -> bool:
+    """Return True if *child* is strictly inside *parent* (case-insensitive on Windows)."""
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
 def _validate_session_paths(source_path: str, target_path: str) -> None:
     """Validate source and target paths before creating a scan session."""
     source = Path(source_path)
     target = Path(target_path)
 
-    # Resolve normalises slashes and symlinks for comparison.
+    # resolve() normalises slashes, resolves symlinks, and on Windows is case-insensitive.
     try:
-        source_resolved = source.resolve()
-        target_resolved = target.resolve()
+        source_r = source.resolve()
+        target_r = target.resolve()
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Некорректный путь: {exc}") from exc
 
-    if source_resolved == target_resolved:
+    if source_r == target_r:
         raise HTTPException(
             status_code=400,
             detail=(
-                "Папка с файлами и папка медиатеки совпадают. "
-                "Выберите разные папки, чтобы не смешивать исходники и результат."
+                "Папка с файлами и папка медиатеки не должны совпадать. "
+                "Выберите отдельную папку для результата."
+            ),
+        )
+
+    if _is_subpath(target_r, source_r):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Папка медиатеки находится внутри папки с файлами. "
+                "Выберите отдельную папку, иначе MediaForge может повторно "
+                "сканировать уже обработанные файлы."
+            ),
+        )
+
+    if _is_subpath(source_r, target_r):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Папка с файлами находится внутри папки медиатеки. "
+                "Выберите отдельную папку с исходниками."
             ),
         )
 
