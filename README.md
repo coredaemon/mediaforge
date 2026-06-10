@@ -47,6 +47,40 @@ Frontend URL: `http://localhost:5173`
 
 The web UI talks to the backend through `VITE_API_BASE_URL` (default `http://localhost:8000`).
 
+### Quick start on Windows
+
+Install backend dependencies once:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -e ".[dev]"
+```
+
+Start both backend and frontend in separate PowerShell windows:
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
+This opens:
+
+- backend at `http://127.0.0.1:8000`
+- frontend at `http://127.0.0.1:5173`
+
+Open the web UI at `http://127.0.0.1:5173`.
+
+You can also start each service separately:
+
+```powershell
+.\scripts\start-backend.ps1
+.\scripts\start-frontend.ps1
+```
+
+The frontend dev server must be running before you open the browser. If Firefox reports that it cannot connect to `localhost:5173`, start the frontend with `.\scripts\start-frontend.ps1` or `npm run dev` inside `frontend/`.
+
+On Windows, prefer `python -m uvicorn` if the `uvicorn` command is not on `PATH`.
+
 ## Backend Commands
 
 Install dependencies:
