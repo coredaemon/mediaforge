@@ -228,6 +228,10 @@ th {
   padding: 0.75rem 0.9rem;
   border-radius: 8px;
   margin-bottom: 1rem;
+  /* Default (no modifier): neutral info-like appearance */
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  color: #334155;
 }
 
 .message.error {
@@ -240,6 +244,12 @@ th {
   background: #eff6ff;
   border: 1px solid #bfdbfe;
   color: #1e3a8a;
+}
+
+.message.success {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
 }
 
 .message.warning {

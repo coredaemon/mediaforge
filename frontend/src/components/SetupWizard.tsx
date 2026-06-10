@@ -38,6 +38,16 @@ const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
   custom: t.wizard.aiProviders.custom,
 };
 
+/** Normalise path for equality comparison: forward slashes, no trailing slash, lowercase. */
+function normalisePath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function pathsAreSame(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  return normalisePath(a) === normalisePath(b);
+}
+
 export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) {
   const [step, setStep] = useState<Step>(editMode ? 2 : 1);
   const [data, setData] = useState<WizardData>({
@@ -71,7 +81,6 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   }, []);
 
   const tmdbConfigured = savedSettings?.tmdb_configured ?? false;
-  const aiConfigured = savedSettings?.ai_configured ?? false;
 
   const [tmdbShowKey, setTmdbShowKey] = useState(false);
   const [tmdbTestResult, setTmdbTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -85,6 +94,14 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [pickerOpen, setPickerOpen] = useState<"source" | "target" | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Computed: are the folder paths the same (after normalisation)?
+  const foldersConflict =
+    data.sourcePath.trim() !== "" &&
+    data.targetPath.trim() !== "" &&
+    pathsAreSame(data.sourcePath, data.targetPath);
+  const folderErrorMsg =
+    "Папка с файлами и папка медиатеки не должны совпадать. Выберите отдельную папку для результата.";
 
   function update(patch: Partial<WizardData>) {
     setData((prev) => ({ ...prev, ...patch }));
@@ -149,6 +166,10 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   }
 
   async function handleSave() {
+    if (foldersConflict) {
+      setSaveError(folderErrorMsg);
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -220,7 +241,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   ✓ TMDB-ключ сохранён. Оставьте поле пустым, чтобы не менять ключ.
                 </div>
               ) : (
-                <div className="message" style={{ background: "var(--surface-2, #2a2a2a)", marginBottom: 0 }}>
+                <div className="message warning" style={{ marginBottom: 0 }}>
                   TMDB-ключ не настроен. Получите бесплатный ключ на{" "}
                   <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">
                     themoviedb.org
@@ -430,7 +451,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   <input
                     value={data.sourcePath}
                     onChange={(e) => update({ sourcePath: e.target.value })}
-                    placeholder="D:/Media/Inbox"
+                    placeholder="D:\Media\Inbox"
                   />
                   <button type="button" onClick={() => setPickerOpen("source")}>
                     {t.common.selectFolder}
@@ -443,19 +464,27 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   <input
                     value={data.targetPath}
                     onChange={(e) => update({ targetPath: e.target.value })}
-                    placeholder="D:/Media/Library"
+                    placeholder="D:\Media\Library"
                   />
                   <button type="button" onClick={() => setPickerOpen("target")}>
                     {t.common.selectFolder}
                   </button>
                 </div>
               </label>
+              {foldersConflict ? (
+                <div className="message warning">{folderErrorMsg}</div>
+              ) : null}
             </div>
             <div className="form-actions wizard-nav">
               <button type="button" onClick={() => setStep(3)}>
                 {t.common.prev}
               </button>
-              <button type="button" onClick={() => setStep(5)}>
+              <button
+                type="button"
+                disabled={foldersConflict}
+                title={foldersConflict ? folderErrorMsg : undefined}
+                onClick={() => setStep(5)}
+              >
                 {t.common.next}
               </button>
             </div>
@@ -471,20 +500,20 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                 <strong>{t.wizard.summaryTmdb}</strong>
                 <span>
                   {data.tmdbKey
-                    ? "Будет сохранён новый ключ"
+                    ? "Будет сохранён новый TMDB-ключ"
                     : tmdbConfigured
-                      ? t.wizard.configured
-                      : t.wizard.notConfigured}
+                      ? "TMDB-ключ сохранён"
+                      : "TMDB не настроен"}
                 </span>
               </div>
               <div className="summary-item">
                 <strong>{t.wizard.summaryAi}</strong>
                 <span>
                   {data.aiProvider === "none"
-                    ? aiConfigured
-                      ? t.wizard.configured
-                      : t.wizard.disabled
-                    : AI_PROVIDER_LABELS[data.aiProvider]}
+                    ? "AI-помощник выключен"
+                    : data.aiModel
+                      ? `${AI_PROVIDER_LABELS[data.aiProvider]}: ${data.aiModel}`
+                      : AI_PROVIDER_LABELS[data.aiProvider]}
                 </span>
               </div>
               <div className="summary-item">

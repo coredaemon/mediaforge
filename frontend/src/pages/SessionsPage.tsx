@@ -14,6 +14,9 @@ function normalisePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
+const SAME_FOLDER_MSG =
+  "Папка с файлами и папка медиатеки совпадают. Выберите разные папки, чтобы не смешивать исходники и результат.";
+
 export function SessionsPage() {
   const [sessions, setSessions] = useState<ScanSession[]>([]);
   const [sourcePath, setSourcePath] = useState("");
@@ -62,9 +65,7 @@ export function SessionsPage() {
       return;
     }
     if (normalisePath(sourcePath) === normalisePath(targetPath)) {
-      setFormError(
-        "Папка с файлами и папка медиатеки совпадают. Выберите разные папки, чтобы не смешивать исходники и результат.",
-      );
+      setFormError(SAME_FOLDER_MSG);
       return;
     }
 
@@ -115,8 +116,15 @@ export function SessionsPage() {
               </button>
             </div>
           </label>
+          {/* Real-time warning when both paths are filled but identical */}
+          {sourcePath &&
+          targetPath &&
+          !formError &&
+          normalisePath(sourcePath) === normalisePath(targetPath) ? (
+            <div className="message warning">{SAME_FOLDER_MSG}</div>
+          ) : null}
           {formError ? <div className="message error">{formError}</div> : null}
-          {successMsg ? <div className="message info">{successMsg}</div> : null}
+          {successMsg ? <div className="message success">{successMsg}</div> : null}
           <div className="form-actions">
             <button type="submit" className="btn-primary" disabled={submitting}>
               {submitting ? t.sessions.creating : t.sessions.createButton}

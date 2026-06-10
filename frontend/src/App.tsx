@@ -10,10 +10,13 @@ import { StatusPage } from "./pages/StatusPage";
 function AppContent() {
   const navigate = useNavigate();
   const [state, setState] = useState<"loading" | "ready">("loading");
+  // Track whether first-run setup is done so /setup can redirect correctly.
+  const [setupCompleted, setSetupCompleted] = useState(false);
 
   useEffect(() => {
     getSettings()
       .then((s) => {
+        setSetupCompleted(s.setup_completed);
         if (!s.setup_completed) {
           navigate("/setup", { replace: true });
         }
@@ -40,16 +43,28 @@ function AppContent() {
         <Route
           path="/setup"
           element={
-            <div className="app-shell">
-              <SetupWizard onComplete={() => navigate("/")} />
-            </div>
+            setupCompleted ? (
+              // Setup already done: redirect to settings (edit mode) instead of
+              // showing the first-run wizard from the beginning.
+              <Navigate to="/settings" replace />
+            ) : (
+              <div className="app-shell">
+                <SetupWizard
+                  onComplete={() => {
+                    setSetupCompleted(true);
+                    navigate("/");
+                  }}
+                />
+              </div>
+            )
           }
         />
         <Route
           path="/settings"
           element={
             <div className="app-shell">
-              <SetupWizard editMode onComplete={() => navigate(-1)} />
+              {/* Always use navigate("/") to avoid going back to /setup in history. */}
+              <SetupWizard editMode onComplete={() => navigate("/")} />
             </div>
           }
         />
