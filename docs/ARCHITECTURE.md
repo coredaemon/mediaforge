@@ -62,3 +62,22 @@ The parser is deterministic and local. It works only from already discovered `Me
 8. Mark the session as `PARSED`.
 
 Unknown or low-confidence filenames become `UNKNOWN` items with `NEEDS_REVIEW`. The parser does not call AI or TMDB; those later layers will validate and enrich candidates.
+
+## Current TMDB Matching Flow
+
+TMDB is the canonical metadata source after local parsing creates a candidate. AI is not used in the matching layer.
+
+1. Load parsed `MediaItem` rows for a scan session.
+2. Match only `MOVIE` and `TV_EPISODE` items with a parsed title.
+3. Search TMDB movies for movies and TMDB TV shows for TV episodes.
+4. Store all returned matches as `TmdbMatchCandidate` rows.
+5. Score candidates using title similarity, exact title bonus, year bonus, and a small popularity bonus.
+6. Automatically select the best candidate when `score >= 0.80`.
+7. Mark uncertain candidates as `NEEDS_REVIEW`.
+8. Mark items with no candidates as `UNMATCHED`.
+
+Candidates are separate from the selected match. Auto-selected matches update `MediaItem.tmdb_id`, `tmdb_media_type`, `matched_title`, `matched_year`, and `match_confidence`. Re-running matching does not duplicate candidates; old candidates for a rematched item are deleted before new candidates are saved.
+
+The TMDB API key is read only from local environment configuration. The app starts without a key, but matching requests return a clear `TMDB_API_KEY is not configured` error until a local key is provided.
+
+Apply, rollback, poster download, NFO generation, and frontend workflows are still not implemented.

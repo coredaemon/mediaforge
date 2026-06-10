@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..models.enums import MediaItemStatus, MediaType
 from ..models.media_item import MediaItem
 
 
@@ -21,5 +22,18 @@ class MediaItemRepository:
     async def list_by_scan_session(self, scan_session_id: int) -> Sequence[MediaItem]:
         result = await self.session.execute(
             select(MediaItem).where(MediaItem.scan_session_id == scan_session_id).order_by(MediaItem.id.asc())
+        )
+        return result.scalars().all()
+
+    async def list_matchable_by_scan_session(self, scan_session_id: int) -> Sequence[MediaItem]:
+        result = await self.session.execute(
+            select(MediaItem)
+            .where(
+                MediaItem.scan_session_id == scan_session_id,
+                MediaItem.media_type.in_([MediaType.MOVIE, MediaType.TV_EPISODE]),
+                MediaItem.status != MediaItemStatus.IGNORED,
+                MediaItem.parsed_title.is_not(None),
+            )
+            .order_by(MediaItem.id.asc())
         )
         return result.scalars().all()

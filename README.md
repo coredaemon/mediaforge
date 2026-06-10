@@ -15,7 +15,7 @@ The first implementation path is:
 5. Preview and safely apply approved file operations.
 6. Roll back applied operations when needed.
 
-The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, parse video filenames into first-pass `MediaItem` candidates, and return the result through the API. Discovery and parsing are read-only: they do not move, delete, or modify media files.
+The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, parse video filenames into first-pass `MediaItem` candidates, match those candidates against TMDB, and return the result through the API. Discovery, parsing, and matching are read-only: they do not move, delete, or modify media files.
 
 ## Quick Start
 
@@ -88,6 +88,18 @@ List parsed media item candidates:
 curl http://127.0.0.1:8000/scan-sessions/1/items
 ```
 
+Run TMDB matching:
+
+```bash
+curl -X POST http://127.0.0.1:8000/scan-sessions/1/match-tmdb
+```
+
+List TMDB candidates for an item:
+
+```bash
+curl http://127.0.0.1:8000/items/1/tmdb-candidates
+```
+
 ## Local Workflow
 
 1. Initialize the DB with `python -m backend.scripts.init_db`.
@@ -95,5 +107,17 @@ curl http://127.0.0.1:8000/scan-sessions/1/items
 3. Create a scan session with `POST /scan-sessions`.
 4. Discover source files with `POST /scan-sessions/{id}/discover`.
 5. Parse video filenames with `POST /scan-sessions/{id}/parse`.
-6. Inspect discovered files with `GET /scan-sessions/{id}/files`.
-7. Inspect parsed candidates with `GET /scan-sessions/{id}/items`.
+6. Match parsed candidates with `POST /scan-sessions/{id}/match-tmdb`.
+7. Inspect discovered files with `GET /scan-sessions/{id}/files`.
+8. Inspect parsed items with `GET /scan-sessions/{id}/items`.
+9. Inspect TMDB candidates with `GET /items/{item_id}/tmdb-candidates`.
+
+## TMDB Key
+
+TMDB API keys are local-only. Put a real key in your local `.env` file:
+
+```bash
+TMDB_API_KEY=
+```
+
+Never commit `.env` or real provider keys. The committed `.env.example` intentionally contains placeholders only. If matching is requested without `TMDB_API_KEY`, the API returns `400 TMDB_API_KEY is not configured`.

@@ -16,6 +16,10 @@ class MediaItemRead(BaseModel):
     season_number: int | None = None
     episode_number: int | None = None
     tmdb_id: int | None = None
+    tmdb_media_type: str | None = None
+    matched_title: str | None = None
+    matched_year: int | None = None
+    match_confidence: float | None = None
     confidence: float | None = None
     needs_review: bool
     created_at: datetime

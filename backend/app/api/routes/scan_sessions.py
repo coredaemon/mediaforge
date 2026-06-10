@@ -12,11 +12,18 @@ from ...repositories.media_item_repository import MediaItemRepository
 from ...schemas.media_file import MediaFileRead
 from ...schemas.media_item import MediaItemRead
 from ...schemas.scan_session import ScanSessionCreate, ScanSessionListItem, ScanSessionRead
+from ...schemas.tmdb import TmdbMatchResult
 from ...services.parser_service import ParserService
 from ...services.scan_session_service import ScanSessionNotFoundError, ScanSessionService
 from ...services.scanner_service import ScannerService
+from ...services.tmdb_client import TmdbApiKeyMissingError, TmdbClientProtocol
+from ...services.tmdb_service import TMDBService
 
 router = APIRouter(prefix="/scan-sessions", tags=["scan-sessions"])
+
+
+def get_tmdb_client() -> TmdbClientProtocol | None:
+    return None
 
 
 @router.post("", response_model=ScanSessionRead)
@@ -84,3 +91,18 @@ async def list_scan_session_items(
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return await MediaItemRepository(session).list_by_scan_session(session_id)
+
+
+@router.post("/{session_id}/match-tmdb", response_model=TmdbMatchResult)
+async def match_scan_session_tmdb(
+    session_id: int,
+    force: bool = False,
+    session: AsyncSession = Depends(get_session),
+    tmdb_client: TmdbClientProtocol | None = Depends(get_tmdb_client),
+) -> TmdbMatchResult:
+    try:
+        return await TMDBService(session, client=tmdb_client).match_scan_session(session_id, force=force)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TmdbApiKeyMissingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

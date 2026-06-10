@@ -12,6 +12,7 @@ from .media_item import MediaItem
 from .operation_plan import OperationPlan
 from .plan_operation import PlanOperation
 from .scan_session import ScanSession
+from .tmdb_match_candidate import TmdbMatchCandidate
 
 __all__ = [
     "MediaFile",
@@ -26,4 +27,5 @@ __all__ = [
     "PlanStatus",
     "ScanSession",
     "ScanSessionStatus",
+    "TmdbMatchCandidate",
 ]

@@ -10,6 +10,7 @@ from .enums import MediaItemStatus, MediaType
 if TYPE_CHECKING:
     from .media_file import MediaFile
     from .scan_session import ScanSession
+    from .tmdb_match_candidate import TmdbMatchCandidate
 
 
 class MediaItem(Base):
@@ -29,6 +30,10 @@ class MediaItem(Base):
     season_number: Mapped[int | None] = mapped_column(Integer)
     episode_number: Mapped[int | None] = mapped_column(Integer)
     tmdb_id: Mapped[int | None] = mapped_column(Integer)
+    tmdb_media_type: Mapped[str | None] = mapped_column(String(32))
+    matched_title: Mapped[str | None] = mapped_column(String(512))
+    matched_year: Mapped[int | None] = mapped_column(Integer)
+    match_confidence: Mapped[float | None] = mapped_column(Float)
     confidence: Mapped[float | None] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -40,3 +45,7 @@ class MediaItem(Base):
 
     scan_session: Mapped["ScanSession"] = relationship(back_populates="media_items")
     media_files: Mapped[list["MediaFile"]] = relationship(back_populates="media_item")
+    tmdb_candidates: Mapped[list["TmdbMatchCandidate"]] = relationship(
+        back_populates="media_item",
+        cascade="all, delete-orphan",
+    )

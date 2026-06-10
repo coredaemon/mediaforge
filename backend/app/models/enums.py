@@ -22,6 +22,9 @@ class MediaItemStatus(StrEnum):
     DISCOVERED = "DISCOVERED"
     NEEDS_REVIEW = "NEEDS_REVIEW"
     IGNORED = "IGNORED"
+    MATCHING = "MATCHING"
+    MATCHED = "MATCHED"
+    UNMATCHED = "UNMATCHED"
 
 
 class MediaType(StrEnum):
