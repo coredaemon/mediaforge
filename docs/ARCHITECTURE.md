@@ -15,7 +15,7 @@ MediaForge is designed as a local-first web application with a Python backend, S
 - **Planner** builds dry-run operation plans for preview.
 - **Apply Engine** applies only approved, materialized operation plans.
 - **Rollback Engine** reverses applied operations using recorded plan data.
-- **Web UI** will provide local previews, confirmation flows, and progress visibility.
+- **Web UI** provides a minimal local browser interface for running and inspecting the pipeline.
 
 ## Pipeline
 
@@ -117,4 +117,16 @@ TV episodes are planned into:
 
 Episode-level TMDB metadata is not used yet, so episode titles are not part of the planned filename.
 
-Apply, rollback, and frontend workflows are still not implemented.
+## Web UI Layer
+
+The frontend in `frontend/` is a Vite + React + TypeScript app that calls the existing FastAPI endpoints. It is intentionally minimal on this step:
+
+- create and list scan sessions;
+- open session detail;
+- run discover, parse, TMDB match, and dry-run planning actions;
+- inspect files, parsed items, TMDB candidates, plans, and planned operations;
+- show backend health/status.
+
+The UI does not implement apply, rollback, auth, or filesystem changes. It is a preview and control surface over the read-only pipeline stages already implemented in the backend.
+
+Apply and rollback workflows are still not implemented.

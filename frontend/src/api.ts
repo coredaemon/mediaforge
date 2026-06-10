@@ -1,0 +1,122 @@
+import type {
+  HealthResponse,
+  MediaFile,
+  MediaItem,
+  OperationPlan,
+  PlanOperation,
+  ScanSession,
+  ScanSessionCreate,
+  TmdbMatchCandidate,
+  TmdbMatchResult,
+} from "./types";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const payload = (await response.json()) as { detail?: string | { msg?: string }[] };
+      if (typeof payload.detail === "string") {
+        message = payload.detail;
+      } else if (Array.isArray(payload.detail) && payload.detail[0]?.msg) {
+        message = payload.detail[0].msg;
+      }
+    } catch {
+      // Keep default message when response body is not JSON.
+    }
+    throw new ApiError(response.status, message);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return (await response.json()) as T;
+}
+
+export function getApiBaseUrl(): string {
+  return API_BASE_URL;
+}
+
+export function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>("/health");
+}
+
+export function listScanSessions(): Promise<ScanSession[]> {
+  return request<ScanSession[]>("/scan-sessions");
+}
+
+export function createScanSession(payload: ScanSessionCreate): Promise<ScanSession> {
+  return request<ScanSession>("/scan-sessions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getScanSession(sessionId: number): Promise<ScanSession> {
+  return request<ScanSession>(`/scan-sessions/${sessionId}`);
+}
+
+export function discoverSession(sessionId: number): Promise<ScanSession> {
+  return request<ScanSession>(`/scan-sessions/${sessionId}/discover`, { method: "POST" });
+}
+
+export function parseSession(sessionId: number): Promise<ScanSession> {
+  return request<ScanSession>(`/scan-sessions/${sessionId}/parse`, { method: "POST" });
+}
+
+export function matchTmdbSession(sessionId: number, force = false): Promise<TmdbMatchResult> {
+  const query = force ? "?force=true" : "";
+  return request<TmdbMatchResult>(`/scan-sessions/${sessionId}/match-tmdb${query}`, { method: "POST" });
+}
+
+export function createPlan(sessionId: number, force = false): Promise<OperationPlan> {
+  const query = force ? "?force=true" : "";
+  return request<OperationPlan>(`/scan-sessions/${sessionId}/plan${query}`, { method: "POST" });
+}
+
+export function listFiles(sessionId: number): Promise<MediaFile[]> {
+  return request<MediaFile[]>(`/scan-sessions/${sessionId}/files`);
+}
+
+export function listItems(sessionId: number): Promise<MediaItem[]> {
+  return request<MediaItem[]>(`/scan-sessions/${sessionId}/items`);
+}
+
+export function listPlans(sessionId: number): Promise<OperationPlan[]> {
+  return request<OperationPlan[]>(`/scan-sessions/${sessionId}/plans`);
+}
+
+export function listPlanOperations(planId: number): Promise<PlanOperation[]> {
+  return request<PlanOperation[]>(`/operation-plans/${planId}/operations`);
+}
+
+export function listTmdbCandidates(itemId: number): Promise<TmdbMatchCandidate[]> {
+  return request<TmdbMatchCandidate[]>(`/items/${itemId}/tmdb-candidates`);
+}
+
+export function formatTmdbError(message: string): string {
+  if (message.includes("TMDB_API_KEY is not configured")) {
+    return "TMDB_API_KEY is not configured. Add it to your local .env and restart backend.";
+  }
+  return message;
+}

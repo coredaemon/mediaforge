@@ -19,6 +19,8 @@ The current backend can create scan sessions, discover files in a local source d
 
 ## Quick Start
 
+### Backend
+
 ```bash
 python -m venv .venv
 .\.venv\Scripts\activate
@@ -28,7 +30,22 @@ python -m backend.scripts.init_db
 uvicorn backend.app.main:app --reload
 ```
 
+Backend URL: `http://localhost:8000`
+
 The health endpoint is available at `GET /health`.
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Frontend URL: `http://localhost:5173`
+
+The web UI talks to the backend through `VITE_API_BASE_URL` (default `http://localhost:8000`).
 
 ## Backend Commands
 
@@ -139,6 +156,18 @@ curl http://127.0.0.1:8000/operation-plans/1/operations
 11. Inspect TMDB candidates with `GET /items/{item_id}/tmdb-candidates`.
 
 Planning is dry-run only. No files are moved, copied, deleted, or written yet. Apply and rollback are not implemented.
+
+## Web UI Workflow
+
+1. Start the backend on `http://localhost:8000`.
+2. Start the frontend on `http://localhost:5173`.
+3. Open the Sessions page and create a scan session with your local `source_path` and `target_path`.
+4. Open the session detail page.
+5. Run **Discover**, then **Parse**, then **Match TMDB**, then **Create Plan**.
+6. Inspect **Files**, **Items**, **Plans**, and **Operations** in the same page.
+7. Use **Show TMDB candidates** on an item to inspect match candidates.
+
+The UI is minimal and preview-only. It does not apply plans or change files on disk.
 
 ## TMDB Key
 
