@@ -41,3 +41,34 @@ def test_scan_session_api_flow(client: TestClient, tmp_path) -> None:
         "movie.nfo": "SIDECAR",
         "readme.txt": "OTHER",
     }
+
+
+def test_scan_session_parse_api_flow(client: TestClient, tmp_path) -> None:
+    source_path = tmp_path / "inbox"
+    source_path.mkdir()
+    target_path = tmp_path / "library"
+    target_path.mkdir()
+    (source_path / "The.Matrix.1999.1080p.BluRay.x264.mkv").write_bytes(b"video")
+    (source_path / "The.Matrix.1999.srt").write_text("subtitle", encoding="utf-8")
+    (source_path / "Hannibal.S01E01.mkv").write_bytes(b"video")
+    (source_path / "readme.txt").write_text("notes", encoding="utf-8")
+
+    create_response = client.post(
+        "/scan-sessions",
+        json={"source_path": str(source_path), "target_path": str(target_path)},
+    )
+    session_id = create_response.json()["id"]
+    client.post(f"/scan-sessions/{session_id}/discover")
+
+    parse_response = client.post(f"/scan-sessions/{session_id}/parse")
+    assert parse_response.status_code == 200
+    assert parse_response.json()["status"] == "PARSED"
+
+    items_response = client.get(f"/scan-sessions/{session_id}/items")
+    assert items_response.status_code == 200
+    items = items_response.json()
+    assert len(items) == 2
+    assert {item["parsed_title"]: item["media_type"] for item in items} == {
+        "The Matrix": "MOVIE",
+        "Hannibal": "TV_EPISODE",
+    }

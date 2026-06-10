@@ -15,7 +15,7 @@ The first implementation path is:
 5. Preview and safely apply approved file operations.
 6. Roll back applied operations when needed.
 
-The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, and return the result through the API. Discovery is read-only: it does not move, delete, or modify media files.
+The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, parse video filenames into first-pass `MediaItem` candidates, and return the result through the API. Discovery and parsing are read-only: they do not move, delete, or modify media files.
 
 ## Quick Start
 
@@ -70,8 +70,30 @@ Run discovery for a scan session:
 curl -X POST http://127.0.0.1:8000/scan-sessions/1/discover
 ```
 
+Parse discovered video files:
+
+```bash
+curl -X POST http://127.0.0.1:8000/scan-sessions/1/parse
+```
+
 List discovered files:
 
 ```bash
 curl http://127.0.0.1:8000/scan-sessions/1/files
 ```
+
+List parsed media item candidates:
+
+```bash
+curl http://127.0.0.1:8000/scan-sessions/1/items
+```
+
+## Local Workflow
+
+1. Initialize the DB with `python -m backend.scripts.init_db`.
+2. Start the backend with `uvicorn backend.app.main:app --reload`.
+3. Create a scan session with `POST /scan-sessions`.
+4. Discover source files with `POST /scan-sessions/{id}/discover`.
+5. Parse video filenames with `POST /scan-sessions/{id}/parse`.
+6. Inspect discovered files with `GET /scan-sessions/{id}/files`.
+7. Inspect parsed candidates with `GET /scan-sessions/{id}/items`.

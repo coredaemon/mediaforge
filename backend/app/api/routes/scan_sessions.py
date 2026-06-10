@@ -5,10 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.session import get_session
 from ...models.media_file import MediaFile
+from ...models.media_item import MediaItem
 from ...models.scan_session import ScanSession
 from ...repositories.media_file_repository import MediaFileRepository
+from ...repositories.media_item_repository import MediaItemRepository
 from ...schemas.media_file import MediaFileRead
+from ...schemas.media_item import MediaItemRead
 from ...schemas.scan_session import ScanSessionCreate, ScanSessionListItem, ScanSessionRead
+from ...services.parser_service import ParserService
 from ...services.scan_session_service import ScanSessionNotFoundError, ScanSessionService
 from ...services.scanner_service import ScannerService
 
@@ -60,3 +64,23 @@ async def list_scan_session_files(
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return await MediaFileRepository(session).list_for_scan_session(session_id)
+
+
+@router.post("/{session_id}/parse", response_model=ScanSessionRead)
+async def parse_scan_session(session_id: int, session: AsyncSession = Depends(get_session)) -> ScanSession:
+    try:
+        return await ParserService(session).parse_scan_session(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{session_id}/items", response_model=list[MediaItemRead])
+async def list_scan_session_items(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Sequence[MediaItem]:
+    try:
+        await ScanSessionService(session).get_scan_session(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await MediaItemRepository(session).list_by_scan_session(session_id)
