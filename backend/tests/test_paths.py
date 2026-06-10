@@ -1,11 +1,13 @@
 from pathlib import Path
 
 from backend.app.utils.paths import (
+    classify_media_file_kind,
     is_sidecar_file,
     is_subtitle_file,
     is_video_file,
     normalize_path,
 )
+from backend.app.models.enums import MediaFileKind
 
 
 def test_normalize_path_expands_and_resolves_without_requiring_existence() -> None:
@@ -31,3 +33,7 @@ def test_is_sidecar_file_accepts_metadata_and_artwork_extensions() -> None:
     assert is_sidecar_file("movie.nfo")
     assert is_sidecar_file(Path("poster.JPG"))
     assert not is_sidecar_file("movie.mp4")
+
+
+def test_classify_media_file_kind_returns_other_for_unknown_extensions() -> None:
+    assert classify_media_file_kind("readme.txt") == MediaFileKind.OTHER

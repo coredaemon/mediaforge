@@ -15,7 +15,7 @@ The first implementation path is:
 5. Preview and safely apply approved file operations.
 6. Roll back applied operations when needed.
 
-This initial commit only establishes the project structure, configuration, health endpoint, database session foundation, path utilities, documentation, and tests.
+The current backend can create scan sessions, discover files in a local source directory, record them in SQLite, and return the result through the API. Discovery is read-only: it does not move, delete, or modify media files.
 
 ## Quick Start
 
@@ -24,7 +24,54 @@ python -m venv .venv
 .\.venv\Scripts\activate
 pip install -e ".[dev]"
 pytest
+python -m backend.scripts.init_db
 uvicorn backend.app.main:app --reload
 ```
 
 The health endpoint is available at `GET /health`.
+
+## Backend Commands
+
+Install dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+Initialize the local SQLite database:
+
+```bash
+python -m backend.scripts.init_db
+```
+
+Run the backend:
+
+```bash
+uvicorn backend.app.main:app --reload
+```
+
+Check health:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Create a scan session:
+
+```bash
+curl -X POST http://127.0.0.1:8000/scan-sessions ^
+  -H "Content-Type: application/json" ^
+  -d "{\"source_path\":\"D:/Media/Inbox\",\"target_path\":\"D:/Media/Library\"}"
+```
+
+Run discovery for a scan session:
+
+```bash
+curl -X POST http://127.0.0.1:8000/scan-sessions/1/discover
+```
+
+List discovered files:
+
+```bash
+curl http://127.0.0.1:8000/scan-sessions/1/files
+```
