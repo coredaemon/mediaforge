@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, createScanSession, getSettings, listScanSessions } from "../api";
+import { createScanSession, getSettings, listScanSessions } from "../api";
 import { FolderPickerModal } from "../components/FolderPickerModal";
 import { t } from "../i18n";
 import type { ScanSession } from "../types";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString("ru-RU");
+}
+
+/** Normalise slashes so D:\Foo and D:/Foo are treated as the same path. */
+function normalisePath(p: string): string {
+  return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
 export function SessionsPage() {
@@ -16,6 +21,8 @@ export function SessionsPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState<"source" | "target" | null>(null);
 
   async function loadData() {
@@ -27,7 +34,8 @@ export function SessionsPage() {
       if (!sourcePath && settings.default_source_path) setSourcePath(settings.default_source_path);
       if (!targetPath && settings.default_target_path) setTargetPath(settings.default_target_path);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось загрузить сессии");
+      const msg = err instanceof Error ? err.message : "Не удалось загрузить сессии";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -40,13 +48,34 @@ export function SessionsPage() {
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitting(true);
+    setFormError(null);
+    setSuccessMsg(null);
     setError(null);
+
+    // Client-side validation before sending to backend.
+    if (!sourcePath.trim()) {
+      setFormError("Укажите папку с исходными файлами.");
+      return;
+    }
+    if (!targetPath.trim()) {
+      setFormError("Укажите целевую папку медиатеки.");
+      return;
+    }
+    if (normalisePath(sourcePath) === normalisePath(targetPath)) {
+      setFormError(
+        "Папка с файлами и папка медиатеки совпадают. Выберите разные папки, чтобы не смешивать исходники и результат.",
+      );
+      return;
+    }
+
+    setSubmitting(true);
     try {
       await createScanSession({ source_path: sourcePath, target_path: targetPath });
+      setSuccessMsg("Сессия создана");
       await loadData();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось создать сессию");
+      const msg = err instanceof Error ? err.message : "Не удалось создать сессию";
+      setFormError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -86,6 +115,8 @@ export function SessionsPage() {
               </button>
             </div>
           </label>
+          {formError ? <div className="message error">{formError}</div> : null}
+          {successMsg ? <div className="message info">{successMsg}</div> : null}
           <div className="form-actions">
             <button type="submit" className="btn-primary" disabled={submitting}>
               {submitting ? t.sessions.creating : t.sessions.createButton}

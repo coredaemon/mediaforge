@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,11 +30,51 @@ def get_tmdb_client() -> TmdbClientProtocol | None:
     return None
 
 
+def _validate_session_paths(source_path: str, target_path: str) -> None:
+    """Validate source and target paths before creating a scan session."""
+    source = Path(source_path)
+    target = Path(target_path)
+
+    # Resolve normalises slashes and symlinks for comparison.
+    try:
+        source_resolved = source.resolve()
+        target_resolved = target.resolve()
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Некорректный путь: {exc}") from exc
+
+    if source_resolved == target_resolved:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Папка с файлами и папка медиатеки совпадают. "
+                "Выберите разные папки, чтобы не смешивать исходники и результат."
+            ),
+        )
+
+    if not source.exists():
+        raise HTTPException(status_code=400, detail=f"Папка не найдена: {source_path}")
+
+    if not source.is_dir():
+        raise HTTPException(status_code=400, detail=f"Путь не является папкой: {source_path}")
+
+    try:
+        list(source.iterdir())
+    except PermissionError:
+        raise HTTPException(status_code=400, detail=f"Нет доступа к папке: {source_path}")
+
+    if not target.exists():
+        raise HTTPException(status_code=400, detail=f"Папка не найдена: {target_path}")
+
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"Путь не является папкой: {target_path}")
+
+
 @router.post("", response_model=ScanSessionRead)
 async def create_scan_session(
     payload: ScanSessionCreate,
     session: AsyncSession = Depends(get_session),
 ) -> ScanSession:
+    _validate_session_paths(payload.source_path, payload.target_path)
     return await ScanSessionService(session).create_scan_session(
         source_path=payload.source_path,
         target_path=payload.target_path,

@@ -4,6 +4,9 @@ from ..models.app_settings import AppSettings
 
 _SINGLETON_ID = 1
 
+# Fields that hold secrets: empty string or None must never overwrite an existing value.
+_SECRET_FIELDS = frozenset({"tmdb_api_key", "ai_api_key"})
+
 
 class AppSettingsRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -21,8 +24,14 @@ class AppSettingsRepository:
     async def update(self, payload: dict) -> AppSettings:
         settings = await self.get_or_create()
         for field, value in payload.items():
-            if hasattr(settings, field) and value is not None:
-                setattr(settings, field, value)
+            if not hasattr(settings, field):
+                continue
+            # For secret fields skip None and empty string — never wipe a saved key.
+            if field in _SECRET_FIELDS and not value:
+                continue
+            if value is None:
+                continue
+            setattr(settings, field, value)
         await self.session.flush()
         await self.session.refresh(settings)
         return settings

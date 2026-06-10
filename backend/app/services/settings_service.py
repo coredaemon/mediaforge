@@ -43,13 +43,33 @@ class SettingsService:
         s = await self.repo.get_or_create()
         key = api_key or s.tmdb_api_key
         if not key:
-            return TestConnectionResult(success=False, message="TMDB API ключ не настроен")
+            return TestConnectionResult(success=False, message="TMDB-ключ не настроен. Введите API ключ с themoviedb.org.")
         client = TmdbClient(key, timeout_seconds=_TMDB_TEST_TIMEOUT)
         try:
             results = await client.search_movie("The Matrix", year=1999)
             if results:
                 return TestConnectionResult(success=True, message="TMDB подключён успешно")
             return TestConnectionResult(success=True, message="TMDB подключён (тестовый запрос вернул пустой результат)")
+        except httpx.TimeoutException:
+            return TestConnectionResult(
+                success=False,
+                message="TMDB не ответил вовремя. Проверьте интернет-соединение.",
+            )
+        except httpx.ConnectError:
+            return TestConnectionResult(
+                success=False,
+                message="Не удалось подключиться к TMDB. Проверьте интернет.",
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                return TestConnectionResult(
+                    success=False,
+                    message="TMDB отклонил ключ. Проверьте API key на themoviedb.org.",
+                )
+            return TestConnectionResult(
+                success=False,
+                message=f"TMDB вернул ошибку {exc.response.status_code}.",
+            )
         except Exception as exc:
             return TestConnectionResult(success=False, message=f"Ошибка TMDB: {exc}")
 

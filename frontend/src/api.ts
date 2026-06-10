@@ -27,26 +27,45 @@ export class ApiError extends Error {
   }
 }
 
+type PydanticError = { msg?: string; loc?: (string | number)[]; type?: string };
+
+function formatPydanticErrors(errors: PydanticError[]): string {
+  return errors
+    .map((e) => {
+      const field = e.loc ? e.loc.filter((l) => l !== "body").join(" → ") : "";
+      return field ? `${field}: ${e.msg ?? "invalid"}` : (e.msg ?? "invalid");
+    })
+    .join("; ");
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+      ...init,
+    });
+  } catch {
+    // Network-level error: backend is down or unreachable.
+    throw new ApiError(0, `Backend недоступен. Проверьте, что сервер запущен на ${API_BASE_URL}`);
+  }
 
   if (!response.ok) {
-    let message = `Request failed with status ${response.status}`;
+    let message = `Ошибка ${response.status}`;
     try {
-      const payload = (await response.json()) as { detail?: string | { msg?: string }[] };
+      const payload = (await response.json()) as { detail?: string | PydanticError[] };
       if (typeof payload.detail === "string") {
         message = payload.detail;
-      } else if (Array.isArray(payload.detail) && payload.detail[0]?.msg) {
-        message = payload.detail[0].msg;
+      } else if (Array.isArray(payload.detail) && payload.detail.length > 0) {
+        message = formatPydanticErrors(payload.detail);
       }
     } catch {
-      // Keep default message when response body is not JSON.
+      // Response body is not JSON — keep HTTP status message.
+      const text = await response.text().catch(() => "");
+      if (text) message = `Ошибка ${response.status}: ${text.slice(0, 200)}`;
     }
     throw new ApiError(response.status, message);
   }

@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  ApiError,
   getLmStudioModels,
   getOllamaModels,
+  getSettings,
   testAiConnection,
   testTmdbConnection,
   updateSettings,
 } from "../api";
 import { t } from "../i18n";
+import type { AppSettingsRead } from "../types";
 import { FolderPickerModal } from "./FolderPickerModal";
 
 type AiProvider = "none" | "gemini" | "ollama" | "lmstudio" | "custom";
@@ -48,6 +49,29 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     sourcePath: "",
     targetPath: "",
   });
+  const [savedSettings, setSavedSettings] = useState<AppSettingsRead | null>(null);
+
+  // Load current settings on mount to show "key saved" indicators.
+  useEffect(() => {
+    getSettings()
+      .then((s) => {
+        setSavedSettings(s);
+        setData((prev) => ({
+          ...prev,
+          aiProvider: (s.ai_provider as AiProvider | null) ?? "none",
+          aiBaseUrl: s.ai_base_url ?? "",
+          aiModel: s.ai_model ?? "",
+          sourcePath: prev.sourcePath || s.default_source_path || "",
+          targetPath: prev.targetPath || s.default_target_path || "",
+        }));
+      })
+      .catch(() => {
+        // Backend may not be reachable yet — continue without prefill.
+      });
+  }, []);
+
+  const tmdbConfigured = savedSettings?.tmdb_configured ?? false;
+  const aiConfigured = savedSettings?.ai_configured ?? false;
 
   const [tmdbShowKey, setTmdbShowKey] = useState(false);
   const [tmdbTestResult, setTmdbTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -70,10 +94,12 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     setTmdbTesting(true);
     setTmdbTestResult(null);
     try {
+      // Pass new key if user typed one; otherwise backend uses the saved key.
       const result = await testTmdbConnection(data.tmdbKey || undefined);
       setTmdbTestResult(result);
     } catch (err) {
-      setTmdbTestResult({ success: false, message: err instanceof ApiError ? err.message : "Ошибка" });
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка при проверке TMDB";
+      setTmdbTestResult({ success: false, message: msg });
     } finally {
       setTmdbTesting(false);
     }
@@ -93,7 +119,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         setAiTestResult({ success: false, message: result.message ?? "Не удалось найти модели" });
       }
     } catch (err) {
-      setAiTestResult({ success: false, message: err instanceof ApiError ? err.message : "Ошибка" });
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка при поиске моделей";
+      setAiTestResult({ success: false, message: msg });
     } finally {
       setAiSearching(false);
     }
@@ -102,17 +129,20 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   async function handleTestAi() {
     setAiTesting(true);
     setAiTestResult(null);
-    await updateSettings({
+    // Persist AI settings first so the backend can test them.
+    const aiPayload: Record<string, unknown> = {
       ai_provider: data.aiProvider,
-      ai_api_key: data.aiApiKey || null,
       ai_base_url: data.aiBaseUrl || null,
       ai_model: data.aiModel || null,
-    });
+    };
+    if (data.aiApiKey) aiPayload.ai_api_key = data.aiApiKey;
+    await updateSettings(aiPayload);
     try {
       const result = await testAiConnection();
       setAiTestResult(result);
     } catch (err) {
-      setAiTestResult({ success: false, message: err instanceof ApiError ? err.message : "Ошибка" });
+      const msg = err instanceof Error ? err.message : "Неизвестная ошибка при проверке AI";
+      setAiTestResult({ success: false, message: msg });
     } finally {
       setAiTesting(false);
     }
@@ -122,19 +152,23 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     setSaving(true);
     setSaveError(null);
     try {
-      await updateSettings({
-        tmdb_api_key: data.tmdbKey || null,
+      // Only include keys if the user actually typed something new.
+      // Empty field must NOT overwrite a saved key.
+      const payload: Record<string, unknown> = {
         ai_provider: data.aiProvider,
-        ai_api_key: data.aiApiKey || null,
         ai_base_url: data.aiBaseUrl || null,
         ai_model: data.aiModel || null,
         default_source_path: data.sourcePath || null,
         default_target_path: data.targetPath || null,
         setup_completed: true,
-      });
+      };
+      if (data.tmdbKey) payload.tmdb_api_key = data.tmdbKey;
+      if (data.aiApiKey) payload.ai_api_key = data.aiApiKey;
+      await updateSettings(payload);
       onComplete();
     } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : "Ошибка сохранения");
+      const msg = err instanceof Error ? err.message : "Ошибка сохранения";
+      setSaveError(msg);
     } finally {
       setSaving(false);
     }
@@ -180,14 +214,36 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
             <h2>{t.wizard.tmdbTitle}</h2>
             <p>{t.wizard.tmdbDescription}</p>
             <div className="form-grid">
+              {/* Key status badge */}
+              {tmdbConfigured ? (
+                <div className="message info" style={{ marginBottom: 0 }}>
+                  ✓ TMDB-ключ сохранён. Оставьте поле пустым, чтобы не менять ключ.
+                </div>
+              ) : (
+                <div className="message" style={{ background: "var(--surface-2, #2a2a2a)", marginBottom: 0 }}>
+                  TMDB-ключ не настроен. Получите бесплатный ключ на{" "}
+                  <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer">
+                    themoviedb.org
+                  </a>
+                  .
+                </div>
+              )}
+
               <label>
-                {t.wizard.tmdbKeyLabel}
+                {tmdbConfigured ? "Новый ключ (необязательно)" : t.wizard.tmdbKeyLabel}
                 <div className="input-row">
                   <input
                     type={tmdbShowKey ? "text" : "password"}
                     value={data.tmdbKey}
-                    onChange={(e) => update({ tmdbKey: e.target.value })}
-                    placeholder={t.wizard.tmdbKeyPlaceholder}
+                    onChange={(e) => {
+                      update({ tmdbKey: e.target.value });
+                      setTmdbTestResult(null);
+                    }}
+                    placeholder={
+                      tmdbConfigured
+                        ? "Введите новый ключ, чтобы заменить сохранённый"
+                        : "Вставьте API ключ с themoviedb.org"
+                    }
                   />
                   <button type="button" onClick={() => setTmdbShowKey((v) => !v)}>
                     {tmdbShowKey ? "Скрыть" : "Показать"}
@@ -196,8 +252,17 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                 <small className="muted">{t.wizard.tmdbKeyHint}</small>
               </label>
               <div className="form-actions">
-                <button type="button" disabled={!data.tmdbKey || tmdbTesting} onClick={() => void handleTestTmdb()}>
-                  {tmdbTesting ? t.wizard.tmdbTesting : t.wizard.tmdbTest}
+                {/* Can test saved key OR a newly typed key */}
+                <button
+                  type="button"
+                  disabled={(!data.tmdbKey && !tmdbConfigured) || tmdbTesting}
+                  onClick={() => void handleTestTmdb()}
+                >
+                  {tmdbTesting
+                    ? t.wizard.tmdbTesting
+                    : data.tmdbKey
+                      ? "Проверить новый ключ"
+                      : "Проверить сохранённый ключ"}
                 </button>
               </div>
               {tmdbTestResult ? (
@@ -404,12 +469,22 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
             <div className="summary-grid" style={{ marginBottom: "1.5rem" }}>
               <div className="summary-item">
                 <strong>{t.wizard.summaryTmdb}</strong>
-                <span>{data.tmdbKey ? t.wizard.configured : t.wizard.notConfigured}</span>
+                <span>
+                  {data.tmdbKey
+                    ? "Будет сохранён новый ключ"
+                    : tmdbConfigured
+                      ? t.wizard.configured
+                      : t.wizard.notConfigured}
+                </span>
               </div>
               <div className="summary-item">
                 <strong>{t.wizard.summaryAi}</strong>
                 <span>
-                  {data.aiProvider === "none" ? t.wizard.disabled : AI_PROVIDER_LABELS[data.aiProvider]}
+                  {data.aiProvider === "none"
+                    ? aiConfigured
+                      ? t.wizard.configured
+                      : t.wizard.disabled
+                    : AI_PROVIDER_LABELS[data.aiProvider]}
                 </span>
               </div>
               <div className="summary-item">

@@ -1,3 +1,4 @@
+import httpx
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,3 +100,101 @@ async def test_get_lmstudio_models_returns_error_on_connection_refused(db_sessio
     assert result.success is False
     assert result.models == []
     assert result.message is not None
+
+
+# ── Key preservation tests ─────────────────────────────────────────────────
+
+
+async def test_update_settings_does_not_wipe_tmdb_key_with_empty_string(db_session: AsyncSession) -> None:
+    """Sending an empty tmdb_api_key must NOT overwrite an existing saved key."""
+    repo = AppSettingsRepository(db_session)
+    await repo.update({"tmdb_api_key": "existing-key"})
+    await db_session.commit()
+
+    # Simulate what frontend does when user leaves key field blank.
+    payload = AppSettingsUpdate(default_source_path="/new/source")
+    await SettingsService(db_session).update_settings(payload)
+
+    # Reload and check that the key survived.
+    settings = await repo.get_or_create()
+    await db_session.refresh(settings)
+    assert settings.tmdb_api_key == "existing-key"
+
+
+async def test_update_settings_does_not_wipe_key_when_empty_string_explicitly_passed(
+    db_session: AsyncSession,
+) -> None:
+    """Repo.update called with empty string for a secret field must skip the update."""
+    repo = AppSettingsRepository(db_session)
+    await repo.update({"tmdb_api_key": "saved-key"})
+    await db_session.commit()
+
+    await repo.update({"tmdb_api_key": ""})
+    await db_session.commit()
+
+    settings = await repo.get_or_create()
+    await db_session.refresh(settings)
+    assert settings.tmdb_api_key == "saved-key"
+
+
+async def test_update_settings_replaces_tmdb_key_when_non_empty(db_session: AsyncSession) -> None:
+    """A non-empty tmdb_api_key in the update payload must replace the stored key."""
+    repo = AppSettingsRepository(db_session)
+    await repo.update({"tmdb_api_key": "old-key"})
+    await db_session.commit()
+
+    await repo.update({"tmdb_api_key": "new-key"})
+    await db_session.commit()
+
+    settings = await repo.get_or_create()
+    await db_session.refresh(settings)
+    assert settings.tmdb_api_key == "new-key"
+
+
+# ── TMDB test endpoint error message tests ─────────────────────────────────
+
+
+async def test_test_tmdb_returns_auth_error_message_on_401(db_session: AsyncSession) -> None:
+    await AppSettingsRepository(db_session).update({"tmdb_api_key": "bad-key"})
+    await db_session.commit()
+
+    mock_response = httpx.Response(401, request=httpx.Request("GET", "https://api.themoviedb.org/"))
+    with patch(
+        "backend.app.services.settings_service.TmdbClient.search_movie",
+        new_callable=AsyncMock,
+        side_effect=httpx.HTTPStatusError("401", request=mock_response.request, response=mock_response),
+    ):
+        result = await SettingsService(db_session).test_tmdb()
+
+    assert result.success is False
+    assert "ключ" in result.message.lower() or "отклонил" in result.message.lower()
+
+
+async def test_test_tmdb_returns_network_error_message_on_connect_error(db_session: AsyncSession) -> None:
+    await AppSettingsRepository(db_session).update({"tmdb_api_key": "any-key"})
+    await db_session.commit()
+
+    with patch(
+        "backend.app.services.settings_service.TmdbClient.search_movie",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("Connection refused"),
+    ):
+        result = await SettingsService(db_session).test_tmdb()
+
+    assert result.success is False
+    assert "подключиться" in result.message.lower() or "интернет" in result.message.lower()
+
+
+async def test_test_tmdb_returns_timeout_message(db_session: AsyncSession) -> None:
+    await AppSettingsRepository(db_session).update({"tmdb_api_key": "any-key"})
+    await db_session.commit()
+
+    with patch(
+        "backend.app.services.settings_service.TmdbClient.search_movie",
+        new_callable=AsyncMock,
+        side_effect=httpx.ReadTimeout("timed out"),
+    ):
+        result = await SettingsService(db_session).test_tmdb()
+
+    assert result.success is False
+    assert "вовремя" in result.message.lower() or "timeout" in result.message.lower()

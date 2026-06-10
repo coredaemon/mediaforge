@@ -25,6 +25,10 @@ Keep placeholder values empty in committed `.env.example` files.
 - `GET /settings` returns only boolean flags (`tmdb_configured`, `ai_configured`) — never raw key values.
 - `PUT /settings` accepts keys for saving but does not echo them back in the response.
 - The env-based `TMDB_API_KEY` remains as a fallback; `AppSettings.tmdb_api_key` takes precedence when set.
+- **Write-only principle:** once a key is saved, the UI can only replace it (by entering a new non-empty value) or test it. The raw value is never returned to the browser.
+- **Empty field does not wipe secrets:** sending an empty or null `tmdb_api_key` / `ai_api_key` in `PUT /settings` is a no-op — the stored key is preserved. This prevents accidental deletion when the user saves other settings without re-entering keys.
+- **Replacement:** a non-empty key string in `PUT /settings` replaces the stored key.
+- **`configured` flags:** the UI uses `tmdb_configured: true/false` to show "key saved" status without exposing the key itself.
 
 ## Filesystem Browser
 
