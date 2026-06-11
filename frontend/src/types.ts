@@ -144,6 +144,118 @@ export interface TmdbMatchCandidate {
   created_at: string;
 }
 
+export interface TmdbSearchResult {
+  tmdb_id: number;
+  media_type: string;
+  title: string;
+  original_title: string | null;
+  overview: string | null;
+  release_date: string | null;
+  first_air_date: string | null;
+  year: number | null;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  vote_average: number | null;
+  popularity: number | null;
+  raw_json: Record<string, unknown> | null;
+}
+
+export interface TvEpisode {
+  id: number;
+  show_id: number;
+  season_id: number | null;
+  source_file_id: number | null;
+  season_number: number;
+  episode_number: number;
+  absolute_number: number | null;
+  title: string | null;
+  overview: string | null;
+  air_date: string | null;
+  tmdb_episode_id: number | null;
+  source_path: string | null;
+  target_path: string | null;
+  confidence: number | null;
+  needs_review: boolean;
+  issue: string | null;
+  warning: string | null;
+  match_source: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TvSeason {
+  id: number;
+  show_id: number;
+  season_number: number;
+  title: string | null;
+  tmdb_season_id: number | null;
+  episode_count: number | null;
+  poster_path: string | null;
+  poster_url: string | null;
+  episodes: TvEpisode[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TvShow {
+  id: number;
+  scan_session_id: number;
+  local_group_id: string | null;
+  title: string;
+  original_title: string | null;
+  year: number | null;
+  first_air_date: string | null;
+  tmdb_id: number | null;
+  imdb_id: string | null;
+  tvdb_id: number | null;
+  wikidata_id: string | null;
+  overview: string | null;
+  poster_path: string | null;
+  poster_url: string | null;
+  backdrop_path: string | null;
+  backdrop_url: string | null;
+  language: string | null;
+  match_source: string | null;
+  confidence: number | null;
+  review_decision: string;
+  needs_review: boolean;
+  ai_reasoning_summary: string | null;
+  warnings: string[] | null;
+  seasons: TvSeason[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TvAnalyzeResult {
+  scan_session_id: number;
+  show_count: number;
+  season_count: number;
+  episode_count: number;
+  warning_count: number;
+}
+
+export interface TvManualSearchRequest {
+  query: string;
+  year?: number | null;
+}
+
+export interface TvManualLookupRequest {
+  tmdb_id?: number | null;
+  imdb_id?: string | null;
+  tvdb_id?: number | null;
+  select?: boolean;
+}
+
+export interface TvReviewDecisionRequest {
+  decision: string;
+  note?: string | null;
+  manual_title?: string | null;
+  manual_year?: number | null;
+  manual_tmdb_id?: number | null;
+  manual_imdb_id?: string | null;
+  manual_tvdb_id?: number | null;
+}
+
 export interface TmdbMatchResult {
   scan_session_id: number;
   matched_count: number;

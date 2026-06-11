@@ -179,6 +179,24 @@ Rollback UI is not implemented yet, but logs retain `rollback_data`.
 
 ## Path Safety Rules
 
+## TV Series Layer
+
+The TV layer is separate from the movie-oriented `MediaItem` workflow. It adds first-class show grouping tables: `tv_shows`, `tv_seasons`, `tv_episodes`, and `tv_grouping_runs`.
+
+`TvFolderContextBuilder` serializes the scan tree into paths, folders, file kinds, sidecar NFO IDs, artwork hints, sizes, mtimes, and deterministic TV hints. It never sends binary media to AI. `tv_hints.py` extracts season/episode hints from `S01E01`, `1x02`, English season/episode words, Russian `сезон/серия` forms, numeric episode files inside season folders, and release-group junk tokens.
+
+The TV pipeline is:
+
+```text
+folder tree -> deterministic hints -> local TV grouping -> TMDB TV match -> Gemini audit -> TV review -> TV dry-run plan
+```
+
+Local/cloud AI clients can provide structured grouping/audit responses; when unavailable, deterministic grouping and identity audit keep the workflow inspectable. `tv_grouping_runs` stores input/output JSON, provider, model, status, duration, and errors.
+
+TMDB TV matching uses `/search/tv`, `/tv/{id}`, `/tv/{id}/season/{season_number}`, and `/find/{external_id}`. Russian metadata is requested first with English fallback; artwork prefers `ru,null,en`. Sidecar IDs are preferred over title queries.
+
+TV planning creates a normal `OperationPlan`, but every TV operation has `tv_apply_disabled=true`. `ApplyService` rejects such plans before filesystem writes. Target paths are direct under the selected target root and do not add `TV Shows`.
+
 Before validation and apply:
 
 - Source paths for `MOVE_FILE` must stay inside `scan_session.source_path`.

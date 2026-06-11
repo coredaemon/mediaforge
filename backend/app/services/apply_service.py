@@ -16,7 +16,7 @@ from ..repositories.media_item_repository import MediaItemRepository
 from ..repositories.operation_plan_repository import OperationPlanRepository
 from ..repositories.plan_operation_repository import PlanOperationRepository
 from ..schemas.operation_plan import ApplyRunRead, PlanApplyResult
-from ..utils.nfo_builder import build_movie_nfo
+from ..utils.nfo_builder import build_episode_nfo, build_movie_nfo, build_tvshow_nfo
 from ..utils.path_safety import is_trusted_tmdb_url, validate_source_in_session, validate_target_in_session
 from ..utils.paths import normalize_path
 from .plan_validation_service import PlanValidationService
@@ -58,6 +58,8 @@ class ApplyService:
         operations = list(await self.plan_operations.list_by_plan(plan_id))
         if not operations:
             raise PlanApplyError("Plan has no operations")
+        if any((operation.payload_json or {}).get("tv_apply_disabled") for operation in operations):
+            raise PlanApplyError("TV apply is intentionally disabled in this release; inspect the dry-run plan only.")
 
         apply_run = await self.apply_runs.create(
             ApplyRun(
@@ -239,6 +241,25 @@ class ApplyService:
             if item is None:
                 raise PlanApplyError(f"Media item {media_item_id} not found for NFO generation")
             return build_movie_nfo(item)
+        if nfo_type in {"tvshow", "episode"}:
+            from ..repositories.tv_repository import TvRepository
+
+            tv_repo = TvRepository(self.session)
+            show_id = payload.get("tv_show_id")
+            if not show_id:
+                raise PlanApplyError("TV NFO payload missing tv_show_id")
+            show = await tv_repo.get_show(int(show_id))
+            if show is None:
+                raise PlanApplyError(f"TV show {show_id} not found for NFO generation")
+            if nfo_type == "tvshow":
+                return build_tvshow_nfo(show)
+            episode_id = payload.get("tv_episode_id")
+            if not episode_id:
+                raise PlanApplyError("Episode NFO payload missing tv_episode_id")
+            episode = next((episode for episode in show.episodes if episode.id == int(episode_id)), None)
+            if episode is None:
+                raise PlanApplyError(f"TV episode {episode_id} not found for NFO generation")
+            return build_episode_nfo(show, episode)
         raise PlanApplyError("WRITE_TEXT_FILE payload missing media_item_id or nfo_type")
 
     async def _download_bytes(self, url: str) -> bytes:

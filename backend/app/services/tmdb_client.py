@@ -2,7 +2,7 @@ from typing import Protocol
 
 import httpx
 
-from ..schemas.tmdb import TmdbDetailsResult, TmdbExternalIds, TmdbSearchResult
+from ..schemas.tmdb import TmdbDetailsResult, TmdbEpisodeResult, TmdbExternalIds, TmdbSearchResult, TmdbSeasonDetailsResult
 from ..utils.tmdb_images import tmdb_image_url
 
 RU_LANGUAGE = "ru-RU"
@@ -31,6 +31,14 @@ class TmdbClientProtocol(Protocol):
         ...
 
     async def get_tv_details(self, tmdb_id: int, language: str = RU_LANGUAGE) -> TmdbDetailsResult:
+        ...
+
+    async def get_tv_season_details(
+        self,
+        tmdb_id: int,
+        season_number: int,
+        language: str = RU_LANGUAGE,
+    ) -> TmdbSeasonDetailsResult:
         ...
 
     async def find_by_external_id(
@@ -111,6 +119,22 @@ class TmdbClient:
             },
         )
         return self._details_from_tv(payload, language)
+
+    async def get_tv_season_details(
+        self,
+        tmdb_id: int,
+        season_number: int,
+        language: str = RU_LANGUAGE,
+    ) -> TmdbSeasonDetailsResult:
+        payload = await self._get(
+            f"/tv/{tmdb_id}/season/{season_number}",
+            {
+                "language": language,
+                "include_image_language": IMAGE_LANGUAGES,
+                "api_key": self.api_key,
+            },
+        )
+        return self._season_details_from_tv(payload, language)
 
     async def find_by_external_id(
         self,
@@ -207,6 +231,31 @@ class TmdbClient:
             metadata_language=language,
         )
 
+    def _season_details_from_tv(self, payload: dict, language: str) -> TmdbSeasonDetailsResult:
+        season_number = int(payload.get("season_number") or 0)
+        episodes = [
+            TmdbEpisodeResult(
+                tmdb_episode_id=episode.get("id"),
+                season_number=int(episode.get("season_number") or season_number),
+                episode_number=int(episode.get("episode_number") or 0),
+                title=episode.get("name"),
+                overview=episode.get("overview"),
+                air_date=episode.get("air_date"),
+            )
+            for episode in payload.get("episodes", [])
+        ]
+        poster_path = payload.get("poster_path")
+        return TmdbSeasonDetailsResult(
+            tmdb_season_id=payload.get("id"),
+            season_number=season_number,
+            title=payload.get("name"),
+            overview=payload.get("overview"),
+            poster_path=poster_path,
+            poster_url=tmdb_image_url(poster_path),
+            episodes=episodes,
+            metadata_language=language,
+        )
+
 
 def _external_ids(payload: dict) -> TmdbExternalIds:
     tvdb_id = payload.get("tvdb_id")
@@ -256,6 +305,35 @@ async def fetch_localized_details(
     if not _has_localized_text(details):
         fallback = await client.get_tv_details(tmdb_id, EN_LANGUAGE)
         return _merge_details(details, fallback)
+    return details
+
+
+async def fetch_localized_tv_season_details(
+    client: TmdbClientProtocol,
+    *,
+    tmdb_id: int,
+    season_number: int,
+) -> TmdbSeasonDetailsResult:
+    details = await client.get_tv_season_details(tmdb_id, season_number, RU_LANGUAGE)
+    if details.episodes and any((episode.title or "").strip() or (episode.overview or "").strip() for episode in details.episodes):
+        return details
+    fallback = await client.get_tv_season_details(tmdb_id, season_number, EN_LANGUAGE)
+    episodes_by_number = {episode.episode_number: episode for episode in fallback.episodes}
+    merged = []
+    for episode in details.episodes or fallback.episodes:
+        fallback_episode = episodes_by_number.get(episode.episode_number)
+        merged.append(
+            TmdbEpisodeResult(
+                tmdb_episode_id=episode.tmdb_episode_id or (fallback_episode.tmdb_episode_id if fallback_episode else None),
+                season_number=episode.season_number,
+                episode_number=episode.episode_number,
+                title=episode.title or (fallback_episode.title if fallback_episode else None),
+                overview=episode.overview or (fallback_episode.overview if fallback_episode else None),
+                air_date=episode.air_date or (fallback_episode.air_date if fallback_episode else None),
+            )
+        )
+    details.episodes = merged
+    details.metadata_language = fallback.metadata_language
     return details
 
 

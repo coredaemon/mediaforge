@@ -10,6 +10,7 @@ from .enums import (
     OperationType,
     PlanStatus,
     ScanSessionStatus,
+    TvMatchSource,
     ValidationStatus,
 )
 from .media_file import MediaFile
@@ -20,6 +21,10 @@ from .plan_operation import PlanOperation
 from .recognition_memory import RecognitionCorrection, RecognitionTokenRule
 from .scan_session import ScanSession
 from .tmdb_match_candidate import TmdbMatchCandidate
+from .tv_episode import TvEpisode
+from .tv_grouping_run import TvGroupingRun
+from .tv_season import TvSeason
+from .tv_show import TvShow
 
 __all__ = [
     "ApplyOperationLog",
@@ -43,4 +48,9 @@ __all__ = [
     "ScanSession",
     "ScanSessionStatus",
     "TmdbMatchCandidate",
+    "TvEpisode",
+    "TvGroupingRun",
+    "TvMatchSource",
+    "TvSeason",
+    "TvShow",
 ]

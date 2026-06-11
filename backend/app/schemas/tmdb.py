@@ -75,3 +75,23 @@ class TmdbDetailsResult(BaseModel):
     external_ids: TmdbExternalIds = TmdbExternalIds()
     metadata_language: str = "ru-RU"
     overview_is_fallback: bool = False
+
+
+class TmdbEpisodeResult(BaseModel):
+    tmdb_episode_id: int | None = None
+    season_number: int
+    episode_number: int
+    title: str | None = None
+    overview: str | None = None
+    air_date: str | None = None
+
+
+class TmdbSeasonDetailsResult(BaseModel):
+    tmdb_season_id: int | None = None
+    season_number: int
+    title: str | None = None
+    overview: str | None = None
+    poster_path: str | None = None
+    poster_url: str | None = None
+    episodes: list[TmdbEpisodeResult] = []
+    metadata_language: str = "ru-RU"

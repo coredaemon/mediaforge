@@ -31,6 +31,12 @@ import type {
   TmdbManualSearchRequest,
   TmdbMatchCandidate,
   TmdbMatchResult,
+  TmdbSearchResult,
+  TvAnalyzeResult,
+  TvManualLookupRequest,
+  TvManualSearchRequest,
+  TvReviewDecisionRequest,
+  TvShow,
 } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
@@ -151,6 +157,11 @@ export function resolveWithGemini(sessionId: number): Promise<RecognitionNormali
   return request<RecognitionNormalizeResult>(`/scan-sessions/${sessionId}/resolve-with-gemini`, { method: "POST" });
 }
 
+export function analyzeTvSession(sessionId: number, force = true): Promise<TvAnalyzeResult> {
+  const query = force ? "?force=true" : "";
+  return request<TvAnalyzeResult>(`/scan-sessions/${sessionId}/analyze-tv${query}`, { method: "POST" });
+}
+
 export function recognitionPreflight(): Promise<RecognitionPreflightResult> {
   return request<RecognitionPreflightResult>("/recognition/preflight", { method: "POST" });
 }
@@ -160,12 +171,21 @@ export function createPlan(sessionId: number, force = false): Promise<OperationP
   return request<OperationPlan>(`/scan-sessions/${sessionId}/plan${query}`, { method: "POST" });
 }
 
+export function createTvPlan(sessionId: number, force = false): Promise<OperationPlan> {
+  const query = force ? "?force=true" : "";
+  return request<OperationPlan>(`/scan-sessions/${sessionId}/plan-tv${query}`, { method: "POST" });
+}
+
 export function listFiles(sessionId: number): Promise<MediaFile[]> {
   return request<MediaFile[]>(`/scan-sessions/${sessionId}/files`);
 }
 
 export function listItems(sessionId: number): Promise<MediaItem[]> {
   return request<MediaItem[]>(`/scan-sessions/${sessionId}/items`);
+}
+
+export function listTvShows(sessionId: number): Promise<TvShow[]> {
+  return request<TvShow[]>(`/scan-sessions/${sessionId}/tv-shows`);
 }
 
 export function listPlans(sessionId: number): Promise<OperationPlan[]> {
@@ -224,6 +244,27 @@ export function manualTmdbSearch(itemId: number, payload: TmdbManualSearchReques
 
 export function manualTmdbLookup(itemId: number, payload: TmdbManualLookupRequest): Promise<TmdbMatchCandidate> {
   return request<TmdbMatchCandidate>(`/items/${itemId}/tmdb-lookup`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function manualTvTmdbSearch(showId: number, payload: TvManualSearchRequest): Promise<TmdbSearchResult[]> {
+  return request<TmdbSearchResult[]>(`/tv-shows/${showId}/tmdb-search`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function manualTvTmdbLookup(showId: number, payload: TvManualLookupRequest): Promise<TvShow> {
+  return request<TvShow>(`/tv-shows/${showId}/tmdb-lookup`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function applyTvReviewDecision(showId: number, payload: TvReviewDecisionRequest): Promise<TvShow> {
+  return request<TvShow>(`/tv-shows/${showId}/review-decision`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

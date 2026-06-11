@@ -13,6 +13,7 @@ from .api.routes.recognition import router as recognition_router
 from .api.routes.recognition_memory import router as recognition_memory_router
 from .api.routes.scan_sessions import router as scan_sessions_router
 from .api.routes.settings import router as settings_router
+from .api.routes.tv import router as tv_router
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(recognition_memory_router)
     app.include_router(scan_sessions_router)
     app.include_router(settings_router)
+    app.include_router(tv_router)
     return app
 
 

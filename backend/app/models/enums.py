@@ -43,6 +43,17 @@ class ReviewDecision(StrEnum):
     MANUAL_OVERRIDE = "manual_override"
 
 
+class TvMatchSource(StrEnum):
+    PARSER = "parser"
+    SIDECAR_TVDB_ID = "sidecar_tvdb_id"
+    SIDECAR_TMDB_ID = "sidecar_tmdb_id"
+    SIDECAR_IMDB_ID = "sidecar_imdb_id"
+    LOCAL_LLM_GROUPING = "local_llm_grouping"
+    GEMINI_AUDIT = "gemini_audit"
+    MANUAL_OVERRIDE = "manual_override"
+    MEMORY = "memory"
+
+
 class PlanStatus(StrEnum):
     DRAFT = "DRAFT"
     READY = "READY"

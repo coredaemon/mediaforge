@@ -1,4 +1,4 @@
-from backend.app.schemas.tmdb import TmdbDetailsResult, TmdbExternalIds, TmdbSearchResult
+from backend.app.schemas.tmdb import TmdbDetailsResult, TmdbExternalIds, TmdbSearchResult, TmdbSeasonDetailsResult
 from backend.app.schemas.recognition import LlmPreflightCheck, NormalizedTitle
 from backend.app.services.recognition_clients import NormalizeParseResult
 
@@ -11,17 +11,20 @@ class FakeTmdbClient:
         movie_details: dict[int, TmdbDetailsResult] | None = None,
         tv_details: dict[int, TmdbDetailsResult] | None = None,
         find_results: dict[tuple[str, str], list[TmdbSearchResult]] | None = None,
+        tv_season_details: dict[tuple[int, int], TmdbSeasonDetailsResult] | None = None,
     ) -> None:
         self.movie_results = movie_results or []
         self.tv_results = tv_results or []
         self.movie_details = movie_details or {}
         self.tv_details = tv_details or {}
         self.find_results = find_results or {}
+        self.tv_season_details = tv_season_details or {}
         self.movie_calls: list[tuple[str, int | None, str]] = []
         self.tv_calls: list[tuple[str, int | None, str]] = []
         self.movie_detail_calls: list[tuple[int, str]] = []
         self.tv_detail_calls: list[tuple[int, str]] = []
         self.find_calls: list[tuple[str, str, str]] = []
+        self.tv_season_detail_calls: list[tuple[int, int, str]] = []
 
     async def search_movie(
         self,
@@ -96,6 +99,18 @@ class FakeTmdbClient:
             backdrop_path="/backdrop.jpg",
             external_ids=TmdbExternalIds(imdb_id="tt999", tvdb_id=42, wikidata_id="Q2"),
             metadata_language=language,
+        )
+
+    async def get_tv_season_details(
+        self,
+        tmdb_id: int,
+        season_number: int,
+        language: str = "ru-RU",
+    ) -> TmdbSeasonDetailsResult:
+        self.tv_season_detail_calls.append((tmdb_id, season_number, language))
+        return self.tv_season_details.get(
+            (tmdb_id, season_number),
+            TmdbSeasonDetailsResult(season_number=season_number, episodes=[], metadata_language=language),
         )
 
 
