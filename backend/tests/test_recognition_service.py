@@ -7,10 +7,24 @@ from backend.app.repositories.app_settings_repository import AppSettingsReposito
 from backend.app.repositories.recognition_memory_repository import RecognitionMemoryRepository
 from backend.app.schemas.recognition import NormalizedTitle, RecognitionCorrectionCreate
 from backend.app.schemas.tmdb import TmdbSearchResult
+from backend.app.services.recognition_clients import _parse_normalized_json
 from backend.app.services.recognition_service import RecognitionService
 from backend.app.services.scan_session_service import ScanSessionService
 from backend.app.services.tmdb_service import TMDBService
 from backend.tests.fakes import FakeTitleNormalizer, FakeTmdbClient
+
+
+class FakeRawJsonNormalizer:
+    def __init__(self, json_body: str) -> None:
+        self.json_body = json_body
+        self.model = "fake-raw"
+
+    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None):
+        return _parse_normalized_json(
+            self.json_body,
+            parser_title=parser_title,
+            parser_year=parser_year,
+        )
 
 
 async def test_manual_correction_saves_memory_and_updates_item(db_session: AsyncSession, tmp_path) -> None:
@@ -196,6 +210,60 @@ async def test_preflight_does_not_expose_saved_api_keys(db_session: AsyncSession
     serialized = result.model_dump_json()
 
     assert "fake-cloud-key-that-must-not-leak" not in serialized
+
+
+async def test_malformed_tmdb_queries_are_normalized_and_used_for_tmdb(db_session: AsyncSession, tmp_path) -> None:
+    scan_session = await ScanSessionService(db_session).create_scan_session(str(tmp_path / "in"), str(tmp_path / "out"))
+    await MediaItemRepository(db_session).create(
+        MediaItem(
+            scan_session_id=scan_session.id,
+            media_type=MediaType.MOVIE,
+            status=MediaItemStatus.NEEDS_REVIEW,
+            original_title="In.The.Grey2026.1080p.AMZN-New-Team.mkv",
+            parsed_title="In The Grey2026 AMZN New Team",
+            year=2026,
+            needs_review=True,
+        )
+    )
+    await db_session.commit()
+    raw_json = """
+    {
+      "clean_title": "In the Grey",
+      "year": 2026,
+      "media_type": "movie",
+      "confidence": 0.82,
+      "junk_tokens": ["AMZN", "New Team"],
+      "tmdb_queries": [
+        {"query": "In the Grey", "year": 2026},
+        {"query": "In the Grey", "type": "movie"}
+      ],
+      "explanation": "Removed release tags."
+    }
+    """
+    fake_ai = FakeRawJsonNormalizer(raw_json)
+
+    normalize_result = await RecognitionService(db_session, local_client=fake_ai).normalize_scan_session(
+        scan_session.id
+    )
+    item = (await MediaItemRepository(db_session).list_by_scan_session(scan_session.id))[0]
+
+    assert normalize_result.normalized_count == 1
+    assert normalize_result.error_count == 0
+    assert item.local_ai_status == "success"
+    assert item.ai_clean_title == "In the Grey"
+    assert "In the Grey 2026" in item.tmdb_queries
+    assert "In the Grey" in item.tmdb_queries
+    assert item.local_ai_error is not None
+    assert "tmdb_queries format auto-normalized" in item.local_ai_error
+
+    fake_tmdb = FakeTmdbClient(
+        movie_results=[TmdbSearchResult(tmdb_id=100, media_type="movie", title="In The Grey", year=2026)]
+    )
+    match_result = await TMDBService(db_session, client=fake_tmdb).match_scan_session(scan_session.id)
+
+    assert len(fake_tmdb.movie_calls) >= 1
+    assert fake_tmdb.movie_calls[0][0] in {"In the Grey", "In the Grey 2026"}
+    assert match_result.matched_count + match_result.needs_review_count >= 1
 
 
 async def test_tmdb_uses_ai_query_before_parser_title(db_session: AsyncSession, tmp_path) -> None:

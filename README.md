@@ -141,7 +141,11 @@ For Gemini the expected provider is `gemini`. MediaForge parses the response, va
 
 If AI-assisted recognition is enabled, analysis does not continue unless both local and cloud preflight checks pass. If Ollama is down, the selected model is unavailable, Gemini is missing, the key is invalid, or the model returns invalid JSON, the UI stops the pipeline and shows the failed provider, model, duration, error type, and a sanitized response preview. Parser-only mode is available only when AI-assisted recognition is explicitly disabled in settings.
 
-Per-item diagnostics are saved for local AI and Gemini normalization: status, duration, model, JSON validity, and sanitized error text. These diagnostics are shown in the session review cards so it is visible whether AI actually ran.
+Per-item diagnostics are saved for local AI and Gemini normalization: status, duration, model, JSON validity, and sanitized error text. These diagnostics are shown in the session review cards so it is visible whether AI actually ran. If a model returns useful title/year data but `tmdb_queries` or other fields are in a non-ideal format, MediaForge normalizes them automatically and records a short warning instead of failing the item.
+
+The target folder selected when creating a scan session is the actual destination root. MediaForge does not add a `Movies` subfolder automatically for movies; planned paths look like `{target}/{Title} ({Year})/{Title} ({Year}){ext}`.
+
+Scan sessions can be deleted from the sessions list or session detail page. Deletion removes only analysis records from SQLite (files, items, TMDB candidates, plans, operations, corrections). Media files on disk are never deleted.
 
 Cloud AI settings use the same flow as local providers: paste API key, fetch models from the provider, select a model from the dropdown, then test the selected model. Gemini model discovery calls the Gemini models API and filters models that support `generateContent`. OpenAI/ChatGPT-compatible discovery calls `/v1/models` on the configured provider endpoint. Empty key fields and placeholders such as `MediaOrganizer_API_Key`, `YOUR_API_KEY`, and `PASTE_API_KEY_HERE` are ignored and are never sent as real API keys.
 

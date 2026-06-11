@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { createScanSession, getSettings, listScanSessions } from "../api";
+import { createScanSession, deleteScanSession, getSettings, listScanSessions } from "../api";
 import { FolderPickerModal } from "../components/FolderPickerModal";
 import { t } from "../i18n";
 import { labelScanSessionStatus } from "../labels";
@@ -45,6 +45,7 @@ export function SessionsPage() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState<"source" | "target" | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   async function loadData() {
     setLoading(true);
@@ -66,6 +67,25 @@ export function SessionsPage() {
     void loadData();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function handleDelete(session: ScanSession) {
+    const confirmed = window.confirm(t.sessions.deleteConfirm.replace("#{id}", String(session.id)));
+    if (!confirmed) return;
+
+    setDeletingId(session.id);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await deleteScanSession(session.id);
+      setSuccessMsg(t.sessions.deleteSuccess.replace("#{id}", String(session.id)));
+      await loadData();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t.sessions.deleteError;
+      setError(msg);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   async function handleCreate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -176,8 +196,16 @@ export function SessionsPage() {
                     <td>{s.target_path}</td>
                     <td>{labelScanSessionStatus(s.status)}</td>
                     <td>{formatDate(s.created_at)}</td>
-                    <td>
+                    <td className="table-actions">
                       <Link to={`/sessions/${s.id}`}>{t.sessions.openButton}</Link>
+                      <button
+                        type="button"
+                        className="btn-danger"
+                        disabled={deletingId === s.id}
+                        onClick={() => void handleDelete(s)}
+                      >
+                        {deletingId === s.id ? t.common.loading : t.sessions.deleteButton}
+                      </button>
                     </td>
                   </tr>
                 ))}

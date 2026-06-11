@@ -82,13 +82,27 @@ async def test_planning_service_creates_dry_run_operations_without_touching_file
     assert OperationType.DOWNLOAD_FILE in operation_types
     assert matrix_source.exists()
     assert hannibal_source.exists()
-    assert not (target_path / "Movies").exists()
     assert not (target_path / "TV Shows").exists()
     matrix_source_resolved = str(matrix_source.resolve())
     assert any(operation.source_path == matrix_source_resolved for operation in move_operations)
     assert any(
-        Path(operation.target_path).as_posix().endswith("Movies/The Matrix (1999)/The Matrix (1999).mkv")
+        Path(operation.target_path).as_posix().endswith("The Matrix (1999)/The Matrix (1999).mkv")
         for operation in move_operations
+    )
+    assert any(
+        Path(operation.target_path).as_posix().endswith("The Matrix (1999)/movie.nfo")
+        for operation in operations
+        if operation.operation_type == OperationType.WRITE_TEXT_FILE
+    )
+    assert any(
+        Path(operation.target_path).as_posix().endswith("The Matrix (1999)/poster.jpg")
+        for operation in operations
+        if operation.operation_type == OperationType.DOWNLOAD_FILE
+    )
+    assert any(
+        Path(operation.target_path).as_posix().endswith("The Matrix (1999)/fanart.jpg")
+        for operation in operations
+        if operation.operation_type == OperationType.DOWNLOAD_FILE
     )
     assert any(
         Path(operation.target_path).as_posix().endswith("TV Shows/Hannibal/Season 01/Hannibal S01E01.mkv")

@@ -1,5 +1,6 @@
 from backend.app.schemas.tmdb import TmdbSearchResult
 from backend.app.schemas.recognition import LlmPreflightCheck, NormalizedTitle
+from backend.app.services.recognition_clients import NormalizeParseResult
 
 
 class FakeTmdbClient:
@@ -48,11 +49,13 @@ class FakeTitleNormalizer:
         self.calls: list[tuple[str, str | None, int | None]] = []
         self.preflight_calls: list[str] = []
 
-    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
+    async def normalize(
+        self, original_name: str, parser_title: str | None, parser_year: int | None
+    ) -> NormalizeParseResult:
         self.calls.append((original_name, parser_title, parser_year))
         if self.fail:
             raise RuntimeError("normalizer failed")
-        return self.result
+        return NormalizeParseResult(title=self.result)
 
     async def preflight(self, expected_provider: str) -> LlmPreflightCheck:
         self.preflight_calls.append(expected_provider)

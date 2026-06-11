@@ -20,7 +20,7 @@ def format_episode_filename(title: str, season_number: int, episode_number: int,
 
 def build_movie_folder_path(target_root: Path, matched_title: str, matched_year: int) -> Path:
     safe_title = sanitize_path_segment(matched_title)
-    return target_root / "Movies" / f"{safe_title} ({matched_year})"
+    return target_root / f"{safe_title} ({matched_year})"
 
 
 def build_movie_video_path(target_root: Path, matched_title: str, matched_year: int, extension: str) -> Path:

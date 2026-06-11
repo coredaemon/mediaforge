@@ -27,6 +27,10 @@ class ScanSessionRepository:
         )
         return result.scalars().all()
 
+    async def delete(self, scan_session: ScanSession) -> None:
+        await self.session.delete(scan_session)
+        await self.session.flush()
+
     async def set_status(
         self,
         scan_session: ScanSession,

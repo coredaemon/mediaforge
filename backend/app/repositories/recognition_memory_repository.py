@@ -1,7 +1,7 @@
 import json
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.recognition_memory import RecognitionCorrection, RecognitionTokenRule
@@ -31,6 +31,13 @@ class RecognitionMemoryRepository:
     async def list_remove_tokens(self) -> set[str]:
         rules = await self.list_token_rules()
         return {rule.token for rule in rules if rule.action == "remove"}
+
+    async def delete_corrections_for_media_items(self, media_item_ids: list[int]) -> None:
+        if not media_item_ids:
+            return
+        await self.session.execute(
+            delete(RecognitionCorrection).where(RecognitionCorrection.media_item_id.in_(media_item_ids))
+        )
 
     async def upsert_remove_token(self, token: str, source: str = "manual") -> RecognitionTokenRule | None:
         normalized = _normalize_token(token)

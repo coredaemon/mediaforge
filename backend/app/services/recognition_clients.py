@@ -1,19 +1,28 @@
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
 
 from ..schemas.recognition import LlmPreflightCheck, NormalizedTitle
+from ..utils.ai_response_normalization import coerce_normalized_title
 
 _TIMEOUT_SECONDS = 90.0
 _PREFLIGHT_TEST = "mediaforge-preflight"
 
 
+@dataclass
+class NormalizeParseResult:
+    title: NormalizedTitle
+    warnings: list[str] = field(default_factory=list)
+
+
 class TitleNormalizerClient(Protocol):
-    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
+    async def normalize(
+        self, original_name: str, parser_title: str | None, parser_year: int | None
+    ) -> NormalizeParseResult:
         """Return a normalized title suggestion for one media item."""
 
     async def preflight(self, expected_provider: str) -> LlmPreflightCheck:
@@ -25,7 +34,9 @@ class OllamaTitleNormalizer:
         self.base_url = base_url.rstrip("/")
         self.model = model or "gemma3"
 
-    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
+    async def normalize(
+        self, original_name: str, parser_title: str | None, parser_year: int | None
+    ) -> NormalizeParseResult:
         payload = {
             "model": self.model,
             "prompt": _prompt(original_name, parser_title, parser_year),
@@ -36,7 +47,7 @@ class OllamaTitleNormalizer:
             response = await client.post(f"{self.base_url}/api/generate", json=payload)
             response.raise_for_status()
             body = response.json().get("response", "{}")
-        return _parse_normalized_json(body)
+        return _parse_normalized_json(body, parser_title=parser_title, parser_year=parser_year)
 
     async def preflight(self, expected_provider: str = "local") -> LlmPreflightCheck:
         started = time.perf_counter()
@@ -69,7 +80,9 @@ class OpenAICompatibleTitleNormalizer:
         self.model = model or "local-model"
         self.api_key = api_key
 
-    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
+    async def normalize(
+        self, original_name: str, parser_title: str | None, parser_year: int | None
+    ) -> NormalizeParseResult:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         payload = {
             "model": self.model,
@@ -80,7 +93,7 @@ class OpenAICompatibleTitleNormalizer:
             response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
             response.raise_for_status()
             body = response.json()["choices"][0]["message"]["content"]
-        return _parse_normalized_json(body)
+        return _parse_normalized_json(body, parser_title=parser_title, parser_year=parser_year)
 
     async def preflight(self, expected_provider: str = "local") -> LlmPreflightCheck:
         started = time.perf_counter()
@@ -112,7 +125,9 @@ class GeminiTitleNormalizer:
         self.api_key = api_key
         self.model = model or "gemini-2.0-flash"
 
-    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
+    async def normalize(
+        self, original_name: str, parser_title: str | None, parser_year: int | None
+    ) -> NormalizeParseResult:
         payload = {"contents": [{"parts": [{"text": _prompt(original_name, parser_title, parser_year)}]}]}
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
@@ -120,7 +135,7 @@ class GeminiTitleNormalizer:
             response.raise_for_status()
             parts = response.json()["candidates"][0]["content"]["parts"]
             body = "".join(part.get("text", "") for part in parts)
-        return _parse_normalized_json(body)
+        return _parse_normalized_json(body, parser_title=parser_title, parser_year=parser_year)
 
     async def preflight(self, expected_provider: str = "gemini") -> LlmPreflightCheck:
         started = time.perf_counter()
@@ -144,13 +159,21 @@ class GeminiTitleNormalizer:
             return _failed_preflight("gemini", self.model, None, started, exc)
 
 
-def _parse_normalized_json(value: str) -> NormalizedTitle:
-    start = value.find("{")
-    end = value.rfind("}")
-    if start >= 0 and end >= start:
-        value = value[start : end + 1]
-    data = json.loads(value)
-    return NormalizedTitle.model_validate(data)
+def _parse_normalized_json(
+    value: str,
+    *,
+    parser_title: str | None = None,
+    parser_year: int | None = None,
+) -> NormalizeParseResult:
+    parsed = _extract_json(value)
+    if parsed.data is None:
+        raise json.JSONDecodeError("Response was not valid JSON.", value, 0)
+    title, warnings = coerce_normalized_title(
+        parsed.data,
+        parser_title=parser_title,
+        parser_year=parser_year,
+    )
+    return NormalizeParseResult(title=title, warnings=warnings)
 
 
 def _preflight_prompt(expected_provider: str) -> str:
@@ -262,8 +285,23 @@ def _duration_ms(started: float) -> int:
 
 def _prompt(original_name: str, parser_title: str | None, parser_year: int | None) -> str:
     return (
-        "Normalize a media filename for TMDB search. Return strict JSON only with keys: "
-        "clean_title, year, media_type, confidence, junk_tokens, explanation, tmdb_queries. "
-        "Remove release groups, streaming tags, quality/audio/video codecs, and team names. "
+        "Normalize a media filename for TMDB search.\n"
+        "Return JSON exactly in this shape:\n"
+        "{\n"
+        '  "media_type": "movie",\n'
+        '  "clean_title": "In the Grey",\n'
+        '  "year": 2026,\n'
+        '  "season": null,\n'
+        '  "episode": null,\n'
+        '  "junk_tokens": ["AMZN", "New Team", "REPACK", "1080p"],\n'
+        '  "tmdb_queries": ["In the Grey 2026", "In the Grey"],\n'
+        '  "confidence": 0.82,\n'
+        '  "needs_review": true,\n'
+        '  "explanation": "..."\n'
+        "}\n"
+        "tmdb_queries MUST be an array of strings.\n"
+        "Do not return objects inside tmdb_queries.\n"
+        "Do not return markdown.\n"
+        "Remove release groups, streaming tags, quality/audio/video codecs, and team names.\n"
         f"Original filename: {original_name!r}. Parser title: {parser_title!r}. Parser year: {parser_year!r}."
     )

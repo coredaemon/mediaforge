@@ -50,6 +50,10 @@ export const t = {
     status: "Статус",
     created: "Создана",
     openButton: "Открыть",
+    deleteButton: "Удалить",
+    deleteConfirm: "Удалить сессию #{id}? Файлы на диске не будут удалены.",
+    deleteSuccess: "Сессия #{id} удалена. Файлы на диске не затронуты.",
+    deleteError: "Не удалось удалить сессию",
     quickStart: "Быстрый старт",
     quickStartHint:
       "Укажите папку с медиафайлами и целевую папку медиатеки, затем нажмите «Создать».",
@@ -58,6 +62,7 @@ export const t = {
   // Session detail
   detail: {
     backToSessions: "← Все сессии",
+    deleteSessionButton: "Удалить сессию",
     sessionTitle: "Сессия #",
     sourceFolder: "Папка с файлами",
     targetFolder: "Папка медиатеки",

@@ -166,14 +166,15 @@ class RecognitionService:
                     )
                     error_count += 1
                     continue
-                suggestion = await client.normalize(item.original_title or "", rule_title, item.year)
-                self._apply_suggestion(item, suggestion, rule_title=rule_title, use_gemini=use_gemini)
+                parse_result = await client.normalize(item.original_title or "", rule_title, item.year)
+                self._apply_suggestion(item, parse_result.title, rule_title=rule_title, use_gemini=use_gemini)
+                warning_text = "; ".join(parse_result.warnings) if parse_result.warnings else None
                 self._mark_ai_diagnostics(
                     item,
                     use_gemini=use_gemini,
                     status="success",
                     duration_ms=_duration_ms(started),
-                    error=None,
+                    error=warning_text,
                     response_valid_json=True,
                     model=getattr(client, "model", None),
                 )
@@ -259,8 +260,13 @@ class RecognitionService:
             item.parsed_title = clean
         if year:
             item.year = year
-        if media_type in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
-            item.media_type = MediaType(media_type)
+        if media_type:
+            try:
+                parsed_type = MediaType(media_type)
+                if parsed_type in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
+                    item.media_type = parsed_type
+            except ValueError:
+                pass
         item.tmdb_queries = _dedupe_queries([*(queries or []), clean, previous_parser_title, item.original_title])
 
     def _mark_ai_diagnostics(

@@ -25,3 +25,8 @@ class ScanSessionListItem(BaseModel):
 
 
 ScanSessionRead = ScanSessionListItem
+
+
+class ScanSessionDeleteResult(BaseModel):
+    ok: bool
+    id: int

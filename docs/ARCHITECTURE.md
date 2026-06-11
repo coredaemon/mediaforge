@@ -102,6 +102,14 @@ Manual corrections update the media item, save a correction row, and upsert remo
 
 Each `MediaItem` stores recognition diagnostics for local AI and Gemini: status (`not_run`, `success`, `failed`, `skipped`), duration, model, JSON validity, and sanitized error text. The UI shows these diagnostics next to parser/AI/Gemini titles and TMDB query priorities.
 
+AI response normalization (`backend/app/utils/ai_response_normalization.py`) coerces common LLM output variants before validation:
+- `tmdb_queries`: accepts `list[str]`, `list[dict]`, single `dict`, `str`, or `null` with fallbacks from `clean_title`/`year`/parser title
+- `media_type`: maps aliases such as `movie`, `film`, `фильм` to internal enum values
+- `confidence`: accepts `0.9`, `90`, `"90%"`, clamps to `0..1`
+- `junk_tokens`: accepts comma-separated strings or arrays
+
+If coercion was required, the item still gets `success` status and a short warning is stored for the UI; only unparseable JSON or responses without a usable title are marked `failed`.
+
 ## Dry-run Planning Layer
 
 Planning is separated from apply. The planner reads `MATCHED` items and builds a `OperationPlan` with `PlanOperation` rows stored in SQLite. No filesystem changes happen.
@@ -113,10 +121,20 @@ Operations created per item:
 - `DOWNLOAD_FILE` — future poster/backdrop artwork
 
 Target paths follow library conventions:
-- Movies: `{target}/Movies/{Title} ({Year})/{Title} ({Year}){ext}`
+- Movies: `{target}/{Title} ({Year})/{Title} ({Year}){ext}` (no automatic `Movies` subfolder; `{target}` is the user-selected destination root)
 - TV episodes: `{target}/TV Shows/{Title}/Season 01/{Title} S01E01{ext}`
 
 Apply and rollback are not implemented yet.
+
+## Scan Session Deletion
+
+`DELETE /scan-sessions/{id}` removes the scan session and all related SQLite rows:
+- `media_files`
+- `media_items` and `tmdb_match_candidates`
+- `operation_plans` and `plan_operations`
+- `recognition_corrections` linked to session items
+
+Global `recognition_token_rules` are preserved. Files on disk are never modified or deleted.
 
 ## App Settings
 

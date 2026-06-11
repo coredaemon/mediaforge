@@ -108,6 +108,10 @@ export function getScanSession(sessionId: number): Promise<ScanSession> {
   return request<ScanSession>(`/scan-sessions/${sessionId}`);
 }
 
+export function deleteScanSession(sessionId: number): Promise<{ ok: boolean; id: number }> {
+  return request<{ ok: boolean; id: number }>(`/scan-sessions/${sessionId}`, { method: "DELETE" });
+}
+
 export function discoverSession(sessionId: number): Promise<ScanSession> {
   return request<ScanSession>(`/scan-sessions/${sessionId}/discover`, { method: "POST" });
 }

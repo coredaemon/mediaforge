@@ -60,7 +60,13 @@ def test_scan_session_plan_api_flow(client: TestClient, tmp_path) -> None:
     assert operation_types == {"CREATE_DIR", "MOVE_FILE", "WRITE_TEXT_FILE", "DOWNLOAD_FILE"}
     assert matrix_source.exists()
     assert hannibal_source.exists()
-    assert not (target_path / "Movies").exists()
+    movie_move_targets = [
+        operation["target_path"]
+        for operation in operations
+        if operation["operation_type"] == "MOVE_FILE" and "The Matrix" in operation["target_path"]
+    ]
+    assert movie_move_targets
+    assert "/Movies/" not in movie_move_targets[0].replace("\\", "/")
 
     app.dependency_overrides.pop(get_tmdb_client, None)
 

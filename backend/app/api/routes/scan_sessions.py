@@ -15,7 +15,7 @@ from ...schemas.media_file import MediaFileRead
 from ...schemas.media_item import MediaItemRead
 from ...schemas.operation_plan import OperationPlanRead
 from ...schemas.recognition import RecognitionNormalizeResult
-from ...schemas.scan_session import ScanSessionCreate, ScanSessionListItem, ScanSessionRead
+from ...schemas.scan_session import ScanSessionCreate, ScanSessionDeleteResult, ScanSessionListItem, ScanSessionRead
 from ...schemas.tmdb import TmdbMatchResult
 from ...services.parser_service import ParserService
 from ...services.planning_service import NoMatchedItemsError, PlanningService
@@ -134,6 +134,15 @@ async def get_scan_session(session_id: int, session: AsyncSession = Depends(get_
         return await ScanSessionService(session).get_scan_session(session_id)
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{session_id}", response_model=ScanSessionDeleteResult)
+async def delete_scan_session(session_id: int, session: AsyncSession = Depends(get_session)) -> ScanSessionDeleteResult:
+    try:
+        deleted_id = await ScanSessionService(session).delete_scan_session(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ScanSessionDeleteResult(ok=True, id=deleted_id)
 
 
 @router.post("/{session_id}/discover", response_model=ScanSessionRead)

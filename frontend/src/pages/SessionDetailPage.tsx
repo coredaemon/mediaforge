@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
   createPlan,
   createRecognitionCorrection,
+  deleteScanSession,
   discoverSession,
   formatTmdbError,
   getScanSession,
@@ -19,6 +20,7 @@ import {
   resolveWithGemini,
   selectTmdbCandidate,
 } from "../api";
+import { t } from "../i18n";
 import {
   labelMediaItemStatus,
   labelMediaType,
@@ -181,6 +183,7 @@ function PreflightPanel({ result, status }: { result: RecognitionPreflightResult
 
 export function SessionDetailPage() {
   const { sessionId } = useParams();
+  const navigate = useNavigate();
   const numId = Number(sessionId);
 
   const [session, setSession] = useState<ScanSession | null>(null);
@@ -371,6 +374,25 @@ export function SessionDetailPage() {
   const busy = actionLoading !== null;
   const nestingWarning = session ? detectPathNestingWarning(session.source_path, session.target_path) : null;
 
+  async function handleDeleteSession() {
+    if (!session) return;
+    const confirmed = window.confirm(t.sessions.deleteConfirm.replace("#{id}", String(session.id)));
+    if (!confirmed) return;
+
+    setActionLoading("delete");
+    setError(null);
+    setInfo(null);
+    try {
+      await deleteScanSession(session.id);
+      navigate("/");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t.sessions.deleteError;
+      setError(msg);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   return (
     <div>
       <p>
@@ -391,7 +413,19 @@ export function SessionDetailPage() {
               </p>
             ) : null}
           </div>
-          {session ? <Badge value={session.status} label={labelScanSessionStatus(session.status)} /> : null}
+          <div className="section-actions">
+            {session ? <Badge value={session.status} label={labelScanSessionStatus(session.status)} /> : null}
+            {session ? (
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={busy}
+                onClick={() => void handleDeleteSession()}
+              >
+                {actionLoading === "delete" ? t.common.loading : t.detail.deleteSessionButton}
+              </button>
+            ) : null}
+          </div>
         </div>
         {loading && !session ? <p className="muted">Загрузка...</p> : null}
         {nestingWarning ? <div className="message warning">{nestingWarning}</div> : null}
@@ -649,20 +683,55 @@ function ItemList({
   );
 }
 
+function AiDiagnosticMessage({
+  provider,
+  status,
+  validJson,
+  error,
+}: {
+  provider: "Local AI" | "Gemini";
+  status: string | null;
+  validJson: boolean | null;
+  error: string | null;
+}) {
+  const label = formatAiStatusLabel(status, validJson, Boolean(error));
+  return (
+    <div className="ai-diagnostic">
+      <span>
+        {provider}: {label}
+      </span>
+      {error ? (
+        <details className="technical-error">
+          <summary>Техническая ошибка</summary>
+          <pre>{error}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function RecognitionEvidence({ item }: { item: MediaItem }) {
   return (
     <div className="recognition-evidence">
       <span>Parser: {fmt(item.parsed_title)} {item.year ? `(${item.year})` : ""}</span>
-      <span>Local AI: {formatAiStatus(item.local_ai_status, item.local_ai_response_valid_json)}</span>
+      <AiDiagnosticMessage
+        provider="Local AI"
+        status={item.local_ai_status}
+        validJson={item.local_ai_response_valid_json}
+        error={item.local_ai_error}
+      />
       <span>Local AI duration: {fmt(item.local_ai_duration_ms)} ms</span>
       <span>Local AI model: {fmt(item.local_ai_model)}</span>
       <span>Local AI result: {fmt(item.ai_clean_title)} {formatPercent(item.ai_confidence)}</span>
-      {item.local_ai_error ? <span className="error-text">Local AI error: {item.local_ai_error}</span> : null}
-      <span>Gemini: {formatAiStatus(item.gemini_status, item.gemini_response_valid_json)}</span>
+      <AiDiagnosticMessage
+        provider="Gemini"
+        status={item.gemini_status}
+        validJson={item.gemini_response_valid_json}
+        error={item.gemini_error}
+      />
       <span>Gemini duration: {fmt(item.gemini_duration_ms)} ms</span>
       <span>Gemini model: {fmt(item.gemini_model)}</span>
       <span>Gemini result: {fmt(item.gemini_clean_title)} {formatPercent(item.gemini_confidence)}</span>
-      {item.gemini_error ? <span className="error-text">Gemini error: {item.gemini_error}</span> : null}
       {item.tmdb_queries?.length ? <span>TMDB queries: {item.tmdb_queries.join(", ")}</span> : null}
       {item.ai_junk_tokens?.length ? <span>Removed tokens: {item.ai_junk_tokens.join(", ")}</span> : null}
       {item.ai_explanation ? <span>{item.ai_explanation}</span> : null}
@@ -671,12 +740,13 @@ function RecognitionEvidence({ item }: { item: MediaItem }) {
   );
 }
 
-function formatAiStatus(status: string | null, validJson: boolean | null): string {
+function formatAiStatusLabel(status: string | null, validJson: boolean | null, hasError: boolean): string {
   if (!status || status === "not_run") return "not run";
+  if (status === "success" && hasError) return "ответ получен, формат был исправлен автоматически";
   if (status === "success") return "success";
   if (status === "skipped") return "skipped";
   if (status === "failed" && validJson === false) return "response received, JSON invalid or call failed";
-  if (status === "failed") return "error";
+  if (status === "failed") return "ошибка формата ответа";
   return status;
 }
 
