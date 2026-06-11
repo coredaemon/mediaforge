@@ -63,6 +63,32 @@ class TMDBService:
             skipped_count=skipped_count,
         )
 
+    async def select_candidate(self, item_id: int, candidate_id: int) -> TmdbMatchCandidate:
+        item = await self.media_items.get_by_id(item_id)
+        if item is None:
+            raise MediaItemNotFoundError(f"Media item {item_id} was not found.")
+
+        candidate = await self.candidates.get_by_id(candidate_id)
+        if candidate is None:
+            raise TmdbCandidateNotFoundError(f"TMDB candidate {candidate_id} was not found.")
+        if candidate.media_item_id != item.id:
+            raise TmdbCandidateOwnershipError(
+                f"TMDB candidate {candidate_id} does not belong to media item {item_id}."
+            )
+
+        await self.candidates.clear_selected_for_media_item(item.id)
+        candidate.is_selected = True
+        item.tmdb_id = candidate.tmdb_id
+        item.tmdb_media_type = candidate.media_type
+        item.matched_title = candidate.title
+        item.matched_year = candidate.year
+        item.match_confidence = candidate.score
+        item.status = MediaItemStatus.MATCHED
+        item.needs_review = False
+        await self.session.commit()
+        await self.session.refresh(candidate)
+        return candidate
+
     async def _match_item(self, item: MediaItem) -> MediaItemStatus:
         item.status = MediaItemStatus.MATCHING
         item.tmdb_id = None
@@ -134,3 +160,15 @@ class TMDBService:
             score=score,
             is_selected=False,
         )
+
+
+class MediaItemNotFoundError(LookupError):
+    """Raised when a media item id does not exist."""
+
+
+class TmdbCandidateNotFoundError(LookupError):
+    """Raised when a TMDB candidate id does not exist."""
+
+
+class TmdbCandidateOwnershipError(ValueError):
+    """Raised when a TMDB candidate belongs to another media item."""

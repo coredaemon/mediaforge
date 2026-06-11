@@ -137,3 +137,81 @@ def test_tmdb_match_without_api_key_returns_400(client: TestClient, tmp_path) ->
 
     assert response.status_code == 400
     assert response.json()["detail"] == "TMDB_API_KEY is not configured"
+
+
+def test_select_tmdb_candidate_api_flow(client: TestClient, tmp_path) -> None:
+    fake_client = FakeTmdbClient(
+        movie_results=[
+            TmdbSearchResult(tmdb_id=603, media_type="movie", title="The Matrix", year=1999, popularity=80),
+            TmdbSearchResult(tmdb_id=604, media_type="movie", title="The Matrix Reloaded", year=2003, popularity=70),
+        ]
+    )
+    app.dependency_overrides[get_tmdb_client] = lambda: fake_client
+
+    source_path = tmp_path / "inbox"
+    source_path.mkdir()
+    target_path = tmp_path / "library"
+    target_path.mkdir()
+    (source_path / "The.Matrix.1999.mkv").write_bytes(b"video")
+
+    create_response = client.post(
+        "/scan-sessions",
+        json={"source_path": str(source_path), "target_path": str(target_path)},
+    )
+    session_id = create_response.json()["id"]
+    client.post(f"/scan-sessions/{session_id}/discover")
+    client.post(f"/scan-sessions/{session_id}/parse")
+    client.post(f"/scan-sessions/{session_id}/match-tmdb")
+    item = client.get(f"/scan-sessions/{session_id}/items").json()[0]
+    candidates = client.get(f"/items/{item['id']}/tmdb-candidates").json()
+    candidate = next(c for c in candidates if c["tmdb_id"] == 604)
+
+    select_response = client.post(f"/items/{item['id']}/tmdb-candidates/{candidate['id']}/select")
+    assert select_response.status_code == 200
+    assert select_response.json()["is_selected"]
+
+    refreshed_item = client.get(f"/scan-sessions/{session_id}/items").json()[0]
+    refreshed_candidates = client.get(f"/items/{item['id']}/tmdb-candidates").json()
+    assert refreshed_item["tmdb_id"] == 604
+    assert refreshed_item["status"] == "MATCHED"
+    assert [c for c in refreshed_candidates if c["is_selected"]][0]["id"] == candidate["id"]
+
+    plan_response = client.post(f"/scan-sessions/{session_id}/plan?force=true")
+    assert plan_response.status_code == 200
+    assert plan_response.json()["status"] == "READY"
+    app.dependency_overrides.pop(get_tmdb_client, None)
+
+
+def test_select_tmdb_candidate_api_errors(client: TestClient, tmp_path) -> None:
+    fake_client = FakeTmdbClient(
+        movie_results=[TmdbSearchResult(tmdb_id=603, media_type="movie", title="The Matrix", year=1999)]
+    )
+    app.dependency_overrides[get_tmdb_client] = lambda: fake_client
+
+    source_path = tmp_path / "inbox"
+    source_path.mkdir()
+    target_path = tmp_path / "library"
+    target_path.mkdir()
+    (source_path / "The.Matrix.1999.mkv").write_bytes(b"video")
+    (source_path / "Alien.1979.mkv").write_bytes(b"video")
+
+    create_response = client.post(
+        "/scan-sessions",
+        json={"source_path": str(source_path), "target_path": str(target_path)},
+    )
+    session_id = create_response.json()["id"]
+    client.post(f"/scan-sessions/{session_id}/discover")
+    client.post(f"/scan-sessions/{session_id}/parse")
+    client.post(f"/scan-sessions/{session_id}/match-tmdb")
+    items = client.get(f"/scan-sessions/{session_id}/items").json()
+    first_item, second_item = items[0], items[1]
+    first_candidate = client.get(f"/items/{first_item['id']}/tmdb-candidates").json()[0]
+
+    missing_item = client.post(f"/items/999999/tmdb-candidates/{first_candidate['id']}/select")
+    missing_candidate = client.post(f"/items/{first_item['id']}/tmdb-candidates/999999/select")
+    wrong_item = client.post(f"/items/{second_item['id']}/tmdb-candidates/{first_candidate['id']}/select")
+
+    assert missing_item.status_code == 404
+    assert missing_candidate.status_code == 404
+    assert wrong_item.status_code == 400
+    app.dependency_overrides.pop(get_tmdb_client, None)

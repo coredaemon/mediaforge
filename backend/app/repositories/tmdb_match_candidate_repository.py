@@ -23,6 +23,9 @@ class TmdbMatchCandidateRepository:
         )
         return result.scalars().all()
 
+    async def get_by_id(self, candidate_id: int) -> TmdbMatchCandidate | None:
+        return await self.session.get(TmdbMatchCandidate, candidate_id)
+
     async def delete_for_media_item(self, media_item_id: int) -> None:
         await self.session.execute(
             delete(TmdbMatchCandidate).where(TmdbMatchCandidate.media_item_id == media_item_id)
@@ -38,3 +41,8 @@ class TmdbMatchCandidateRepository:
             .limit(1)
         )
         return result.scalar_one_or_none()
+
+    async def clear_selected_for_media_item(self, media_item_id: int) -> None:
+        for candidate in await self.list_by_media_item(media_item_id):
+            candidate.is_selected = False
+        await self.session.flush()

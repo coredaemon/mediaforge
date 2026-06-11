@@ -125,3 +125,27 @@ Frontend is a Vite + React + TypeScript app in `frontend/`. It:
 - uses a folder picker component backed by `/filesystem/browse` and `/filesystem/roots`
 - auto-populates session creation form from `default_source_path` / `default_target_path` settings
 - shows backend health indicator in the header
+
+## Review Flow
+
+The session detail page is now a review/preview workspace rather than a raw database table. The main action is **Начать анализ**, which runs discovery, parsing, TMDB matching, and dry-run planning in order. Manual step buttons remain available under **Ручной режим** for debugging or reruns.
+
+The UI summarizes loaded files, items, plans, and operations: total files, video files, subtitles, parsed media items, TMDB matches, items that need review, and planned operations.
+
+Raw enums are translated into Russian labels and displayed as status badges. Technical tables are still available, but they are moved behind **Технические детали** so the primary screen reads as a human review flow.
+
+## Human-In-The-Loop Matching
+
+TMDB matching creates candidates first and only auto-selects confident matches. Users can inspect candidates for any media item and manually select one through:
+
+`POST /items/{item_id}/tmdb-candidates/{candidate_id}/select`
+
+Candidate selection is handled in the service layer. It validates item and candidate ownership, clears previous selected candidates for the item, marks the chosen candidate as selected, and updates `MediaItem` with `tmdb_id`, `tmdb_media_type`, `matched_title`, `matched_year`, `match_confidence`, `status = MATCHED`, and `needs_review = false`.
+
+## Planning After Manual Selection
+
+When a user changes the selected TMDB candidate, the existing dry-run plan may no longer reflect the chosen metadata. The UI provides **Пересобрать план**, which calls:
+
+`POST /scan-sessions/{id}/plan?force=true`
+
+This replaces the current draft/ready plan and reloads operations. It still does not apply anything to the filesystem.

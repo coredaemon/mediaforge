@@ -138,6 +138,12 @@ export function listTmdbCandidates(itemId: number): Promise<TmdbMatchCandidate[]
   return request<TmdbMatchCandidate[]>(`/items/${itemId}/tmdb-candidates`);
 }
 
+export function selectTmdbCandidate(itemId: number, candidateId: number): Promise<TmdbMatchCandidate> {
+  return request<TmdbMatchCandidate>(`/items/${itemId}/tmdb-candidates/${candidateId}/select`, {
+    method: "POST",
+  });
+}
+
 export function formatTmdbError(message: string): string {
   if (message.includes("TMDB_API_KEY is not configured") || message.includes("не настроен")) {
     return "TMDB API ключ не настроен. Перейдите в Настройки и добавьте ключ.";
