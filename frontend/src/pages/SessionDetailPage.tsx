@@ -23,6 +23,12 @@ import {
   resolveWithGemini,
   selectTmdbCandidate,
 } from "../api";
+import {
+  formatAiStatusLabel,
+  formatPreflightStatusLabel,
+  getPreflightShortMessage,
+  humanizeAiError,
+} from "../aiLabels";
 import { getItemBadges } from "../badges";
 import { t } from "../i18n";
 import { validateIdLookupInput } from "../validation";
@@ -56,7 +62,7 @@ const analysisSteps: { key: string; label: string }[] = [
   { key: "parse", label: "Распознавание названий" },
   { key: "match", label: "Поиск в TMDB" },
   { key: "local-ai", label: "Локальная AI-модель" },
-  { key: "gemini", label: "Запасная облачная модель" },
+  { key: "gemini", label: "Распознавание запасной облачной моделью" },
   { key: "plan", label: "Построение безопасного плана" },
 ];
 
@@ -152,20 +158,46 @@ function OperationPreview({ operation }: { operation: PlanOperation }) {
 }
 
 function formatPreflightError(result: RecognitionPreflightResult): string {
+  if (result.message) {
+    return result.message;
+  }
   if (!result.local.ok) {
-    return result.local.error ?? "Local LLM did not respond. Check that Ollama is running, the model is selected, and the endpoint is reachable.";
+    return getPreflightShortMessage(result.local) ?? "Локальная AI-модель не отвечает. Проверьте Ollama и настройки модели.";
   }
-  if (!result.cloud.ok && !(result.cloud_fallback?.ok)) {
-    return result.cloud.error ?? "Cloud AI did not respond. Check the API key and cloud AI settings.";
+  if (!result.cloud.ok && !result.cloud_fallback?.ok) {
+    return getPreflightShortMessage(result.cloud) ?? "Облачные модели недоступны. Проверьте ключ и настройки.";
   }
-  return "AI preflight failed.";
+  return "Проверка AI не пройдена.";
 }
 
-function formatCheckStatus(check: RecognitionPreflightResult["local"] | null | undefined): string {
-  if (!check) return "не запускалось";
-  if (check.ok) return `работает, ${check.duration_ms} мс`;
-  if (check.error_type === "invalid_json") return "ответ получен, JSON некорректен";
-  return check.error_type ? `ошибка: ${check.error_type}` : "ошибка";
+function PreflightCheckBlock({
+  title,
+  check,
+}: {
+  title: string;
+  check: RecognitionPreflightResult["local"] | null | undefined;
+}) {
+  const shortMessage = getPreflightShortMessage(check);
+  return (
+    <div>
+      <span>{title}</span>
+      <strong>{formatPreflightStatusLabel(check)}</strong>
+      {check?.model ? <small>{check.model}</small> : null}
+      {check?.provider ? <small>{check.provider}</small> : null}
+      {check && !check.ok ? (
+        <small>
+          Попыток: {check.attempts ?? 1} · {check.duration_ms} мс
+        </small>
+      ) : null}
+      {shortMessage ? <small className="error-text">{shortMessage}</small> : null}
+      {check?.error ? (
+        <details className="technical-error">
+          <summary>Технические детали</summary>
+          <pre>{check.error}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
 }
 
 function PreflightPanel({ result, status }: { result: RecognitionPreflightResult | null; status: StepStatus }) {
@@ -176,27 +208,10 @@ function PreflightPanel({ result, status }: { result: RecognitionPreflightResult
         <StepBadge status={status} />
       </div>
       <div className="preflight-grid">
-        <div>
-          <span>Локальная AI-модель</span>
-          <strong>{formatCheckStatus(result?.local)}</strong>
-          {result?.local.model ? <small>{result.local.model}</small> : null}
-          {result?.local.endpoint ? <small>{result.local.endpoint}</small> : null}
-          {result?.local.error ? <small className="error-text">{result.local.error}</small> : null}
-        </div>
-        <div>
-          <span>Облачная AI-модель (основная)</span>
-          <strong>{formatCheckStatus(result?.cloud)}</strong>
-          {result?.cloud.model ? <small>{result.cloud.model}</small> : null}
-          {result?.cloud.provider ? <small>{result.cloud.provider}</small> : null}
-          {result?.cloud.error ? <small className="error-text">{result.cloud.error}</small> : null}
-        </div>
+        <PreflightCheckBlock title="Локальная AI-модель" check={result?.local} />
+        <PreflightCheckBlock title="Облачная AI-модель (основная)" check={result?.cloud} />
         {result?.cloud_fallback ? (
-          <div>
-            <span>Облачная AI-модель (запасная)</span>
-            <strong>{formatCheckStatus(result.cloud_fallback)}</strong>
-            {result.cloud_fallback.model ? <small>{result.cloud_fallback.model}</small> : null}
-            {result.cloud_fallback.error ? <small className="error-text">{result.cloud_fallback.error}</small> : null}
-          </div>
+          <PreflightCheckBlock title="Облачная AI-модель (запасная)" check={result.cloud_fallback} />
         ) : null}
       </div>
       {result?.warning ? <div className="message warning">{result.warning}</div> : null}
@@ -521,8 +536,8 @@ export function SessionDetailPage() {
             <button disabled={busy} onClick={() => void runAction("gemini", async () => {
               await resolveWithGemini(numId);
               await matchTmdbSession(numId, true);
-            }, "Gemini fallback and second TMDB pass finished.")}>
-              Gemini + TMDB
+            }, "Запасная облачная модель и повторный поиск в TMDB завершены.")}>
+              Запасная модель + TMDB
             </button>
             <button disabled={busy} onClick={() => void runAction("plan", () => createPlan(numId), "План построен.")}>
               Построить план
@@ -899,14 +914,16 @@ function AiDiagnosticMessage({
   error: string | null;
 }) {
   const label = formatAiStatusLabel(status, validJson, Boolean(error));
+  const humanError = error ? humanizeAiError(error) : null;
   return (
     <div className="ai-diagnostic">
       <span>
         {provider}: {label}
       </span>
+      {humanError ? <small className="error-text">Ошибка: {humanError}</small> : null}
       {error ? (
         <details className="technical-error">
-          <summary>Техническая ошибка</summary>
+          <summary>Технические детали</summary>
           <pre>{error}</pre>
         </details>
       ) : null}
@@ -944,16 +961,6 @@ function RecognitionEvidence({ item }: { item: MediaItem }) {
       {item.gemini_explanation ? <span>{item.gemini_explanation}</span> : null}
     </div>
   );
-}
-
-function formatAiStatusLabel(status: string | null, validJson: boolean | null, hasError: boolean): string {
-  if (!status || status === "not_run") return "not run";
-  if (status === "success" && hasError) return "ответ получен, формат был исправлен автоматически";
-  if (status === "success") return "success";
-  if (status === "skipped") return "skipped";
-  if (status === "failed" && validJson === false) return "response received, JSON invalid or call failed";
-  if (status === "failed") return "ошибка формата ответа";
-  return status;
 }
 
 function CorrectionForm({

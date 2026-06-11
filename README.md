@@ -161,6 +161,8 @@ After TMDB match or manual candidate selection, MediaForge stores TMDB ID plus e
 
 Cloud AI settings use the same flow as local providers: paste API key, fetch models from the provider, select a model from the dropdown, then test the selected model. Gemini model discovery calls the Gemini models API and filters models that support `generateContent`. OpenAI/ChatGPT-compatible discovery calls `/v1/models` on the configured provider endpoint. Empty key fields and placeholders such as `MediaOrganizer_API_Key`, `YOUR_API_KEY`, and `PASTE_API_KEY_HERE` are ignored and are never sent as real API keys.
 
+Облачные провайдеры (Gemini, OpenAI-compatible) иногда возвращают временные ошибки `503` или `429`. MediaForge автоматически повторяет такие запросы (до 3 попыток с паузой 1 и 2 секунды). Если основная облачная модель недоступна, но запасная настроена и отвечает, анализ продолжается с запасной моделью. API-ключи сохраняются локально в SQLite и не возвращаются в `GET /settings`.
+
 ## Workflow через UI
 
 1. Откройте `http://127.0.0.1:5173`

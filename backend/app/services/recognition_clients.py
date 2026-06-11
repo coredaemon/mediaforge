@@ -1,5 +1,4 @@
 import json
-import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -8,7 +7,15 @@ import httpx
 
 from ..schemas.recognition import LlmPreflightCheck, NormalizedTitle
 from ..schemas.recognition_context import RecognitionContext
+from ..utils.ai_errors import (
+    classify_error_type,
+    extract_status_code,
+    humanize_ai_error,
+    is_retryable_error,
+    sanitize_error_text,
+)
 from ..utils.ai_response_normalization import coerce_normalized_title
+from ..utils.ai_retry import RetryExhaustedError, execute_with_retry, post_with_retry
 
 _TIMEOUT_SECONDS = 90.0
 _PREFLIGHT_TEST = "mediaforge-preflight"
@@ -102,10 +109,19 @@ class OpenAICompatibleTitleNormalizer:
             "messages": [{"role": "user", "content": _prompt(original_name, parser_title, parser_year, context)}],
             "temperature": 0,
         }
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-            response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
-            response.raise_for_status()
+        if self.api_key:
+            response, _ = await post_with_retry(
+                f"{self.base_url}/v1/chat/completions",
+                timeout=_TIMEOUT_SECONDS,
+                json=payload,
+                headers=headers,
+            )
             body = response.json()["choices"][0]["message"]["content"]
+        else:
+            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+                response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                body = response.json()["choices"][0]["message"]["content"]
         return _parse_normalized_json(body, parser_title=parser_title, parser_year=parser_year)
 
     async def preflight(self, expected_provider: str = "local") -> LlmPreflightCheck:
@@ -117,17 +133,30 @@ class OpenAICompatibleTitleNormalizer:
                 "messages": [{"role": "user", "content": _preflight_prompt(expected_provider)}],
                 "temperature": 0,
             }
-            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-                response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
-                response.raise_for_status()
+            if self.api_key:
+                response, attempts = await post_with_retry(
+                    f"{self.base_url}/v1/chat/completions",
+                    timeout=_TIMEOUT_SECONDS,
+                    json=payload,
+                    headers=headers,
+                )
                 text = response.json()["choices"][0]["message"]["content"]
+                duration_ms = _duration_ms(started)
+            else:
+                attempts = 1
+                async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+                    response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
+                    response.raise_for_status()
+                    text = response.json()["choices"][0]["message"]["content"]
+                duration_ms = _duration_ms(started)
             return _validate_preflight_response(
                 text,
                 expected_provider=expected_provider,
                 provider="openai-compatible",
                 model=self.model,
                 endpoint=self.base_url,
-                duration_ms=_duration_ms(started),
+                duration_ms=duration_ms,
+                attempts=attempts,
             )
         except Exception as exc:
             return _failed_preflight("openai-compatible", self.model, self.base_url, started, exc)
@@ -147,11 +176,14 @@ class GeminiTitleNormalizer:
     ) -> NormalizeParseResult:
         payload = {"contents": [{"parts": [{"text": _prompt(original_name, parser_title, parser_year, context)}]}]}
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-            response = await client.post(url, params={"key": self.api_key}, json=payload)
-            response.raise_for_status()
-            parts = response.json()["candidates"][0]["content"]["parts"]
-            body = "".join(part.get("text", "") for part in parts)
+        response, _ = await post_with_retry(
+            url,
+            timeout=_TIMEOUT_SECONDS,
+            params={"key": self.api_key},
+            json=payload,
+        )
+        parts = response.json()["candidates"][0]["content"]["parts"]
+        body = "".join(part.get("text", "") for part in parts)
         return _parse_normalized_json(body, parser_title=parser_title, parser_year=parser_year)
 
     async def preflight(self, expected_provider: str = "gemini") -> LlmPreflightCheck:
@@ -159,11 +191,14 @@ class GeminiTitleNormalizer:
         try:
             payload = {"contents": [{"parts": [{"text": _preflight_prompt(expected_provider)}]}]}
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
-            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-                response = await client.post(url, params={"key": self.api_key}, json=payload)
-                response.raise_for_status()
-                parts = response.json()["candidates"][0]["content"]["parts"]
-                text = "".join(part.get("text", "") for part in parts)
+            response, attempts = await post_with_retry(
+                url,
+                timeout=_TIMEOUT_SECONDS,
+                params={"key": self.api_key},
+                json=payload,
+            )
+            parts = response.json()["candidates"][0]["content"]["parts"]
+            text = "".join(part.get("text", "") for part in parts)
             return _validate_preflight_response(
                 text,
                 expected_provider=expected_provider,
@@ -171,6 +206,7 @@ class GeminiTitleNormalizer:
                 model=self.model,
                 endpoint="https://generativelanguage.googleapis.com/v1beta",
                 duration_ms=_duration_ms(started),
+                attempts=attempts,
             )
         except Exception as exc:
             return _failed_preflight("gemini", self.model, None, started, exc)
@@ -209,6 +245,7 @@ def _validate_preflight_response(
     model: str | None,
     endpoint: str | None,
     duration_ms: int,
+    attempts: int = 1,
 ) -> LlmPreflightCheck:
     preview = _sanitize_preview(text)
     parsed = _extract_json(text)
@@ -241,6 +278,8 @@ def _validate_preflight_response(
         message=f"{provider} responded successfully" if ok and provider_ok and test_ok else None,
         error=None if ok and provider_ok and test_ok else "Preflight JSON did not match expected fields.",
         error_type=None if ok and provider_ok and test_ok else "unexpected_payload",
+        attempts=attempts,
+        retryable=False,
     )
 
 
@@ -251,22 +290,36 @@ def _failed_preflight(
     started: float,
     exc: Exception,
 ) -> LlmPreflightCheck:
+    attempts = 1
+    duration_ms = _duration_ms(started)
+    original = exc
+    if isinstance(exc, RetryExhaustedError):
+        original = exc.original
+        attempts = exc.attempts
+        duration_ms = exc.duration_ms
+    status_code = extract_status_code(original)
+    error_type = classify_error_type(original)
+    technical = sanitize_error_text(str(original))
+    human = humanize_ai_error(
+        technical,
+        status_code=status_code,
+        provider=provider,
+        model=model,
+        error_type=error_type,
+    )
     return LlmPreflightCheck(
         ok=False,
         provider=provider,
         model=model,
         endpoint=endpoint,
-        duration_ms=_duration_ms(started),
+        duration_ms=duration_ms,
         response_valid_json=False,
-        error=sanitize_error_text(str(exc)),
-        error_type=exc.__class__.__name__,
+        error=technical,
+        human_message=human,
+        error_type=error_type,
+        attempts=attempts,
+        retryable=is_retryable_error(original),
     )
-
-
-def sanitize_error_text(value: str) -> str:
-    value = re.sub(r"([?&]key=)[^&\\s']+", r"\1[redacted]", value)
-    value = re.sub(r"(Bearer\\s+)[A-Za-z0-9._-]+", r"\1[redacted]", value, flags=re.IGNORECASE)
-    return value
 
 
 @dataclass

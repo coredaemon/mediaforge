@@ -129,16 +129,26 @@ class RecognitionService:
         cloud_fallback = None
         if fallback_client is not None:
             cloud_fallback = await fallback_client.preflight("gemini")
-        warning = None
+        from ..utils.ai_errors import (
+            build_preflight_failure_message,
+            build_preflight_warning,
+            enrich_preflight_check,
+        )
+
+        local = enrich_preflight_check(local)
+        cloud = enrich_preflight_check(cloud)
+        if cloud_fallback is not None:
+            cloud_fallback = enrich_preflight_check(cloud_fallback)
         cloud_ok = cloud.ok or (cloud_fallback.ok if cloud_fallback else False)
-        if not cloud.ok and cloud_fallback and cloud_fallback.ok:
-            warning = "Основная облачная модель недоступна, будет использоваться запасная."
+        warning = build_preflight_warning(cloud, cloud_fallback)
+        message = build_preflight_failure_message(local, cloud, cloud_fallback) if not (local.ok and cloud_ok) else None
         return RecognitionPreflightResult(
             ok=local.ok and cloud_ok,
             local=local,
             cloud=cloud,
             cloud_fallback=cloud_fallback,
             warning=warning,
+            message=message,
         )
 
     async def _normalize_scan_session(self, scan_session_id: int, use_gemini: bool) -> RecognitionNormalizeResult:

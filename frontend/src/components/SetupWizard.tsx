@@ -4,13 +4,15 @@ import {
   getLmStudioModels,
   getOllamaModels,
   getSettings,
+  recognitionPreflight,
   testAiConnection,
   testCloudAi,
   testTmdbConnection,
   updateSettings,
 } from "../api";
+import { humanizeAiError } from "../aiLabels";
 import { t } from "../i18n";
-import type { AppSettingsRead } from "../types";
+import type { AppSettingsRead, LlmPreflightCheck } from "../types";
 import { FolderPickerModal } from "./FolderPickerModal";
 
 type AiProvider = "none" | "gemini" | "ollama" | "lmstudio" | "custom";
@@ -40,6 +42,47 @@ interface SetupWizardProps {
 }
 
 type Step = 1 | 2 | 3 | 4 | 5;
+
+type TestUiStatus = "idle" | "success" | "error";
+
+interface CloudTestState {
+  status: TestUiStatus;
+  message: string;
+  technicalError?: string;
+}
+
+function emptyCloudTest(): CloudTestState {
+  return { status: "idle", message: "" };
+}
+
+function cloudTestFromResult(result: LlmPreflightCheck): CloudTestState {
+  if (result.ok) {
+    return {
+      status: "success",
+      message: `Подключение успешно (${result.duration_ms} мс, попыток: ${result.attempts ?? 1})`,
+    };
+  }
+  return {
+    status: "error",
+    message: result.human_message ?? humanizeAiError(result.error, result.error_type),
+    technicalError: result.error ?? undefined,
+  };
+}
+
+function CloudTestMessage({ test }: { test: CloudTestState }) {
+  if (test.status === "idle") return null;
+  return (
+    <div className={`message ${test.status === "success" ? "info" : "error"}`}>
+      {test.message}
+      {test.technicalError ? (
+        <details className="technical-error">
+          <summary>Технические детали</summary>
+          <pre>{test.technicalError}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
 
 const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
   none: t.wizard.aiProviders.none,
@@ -134,6 +177,12 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [cloudFallbackModels, setCloudFallbackModels] = useState<string[]>([]);
   const [cloudSearching, setCloudSearching] = useState(false);
   const [cloudFallbackSearching, setCloudFallbackSearching] = useState(false);
+  const [primaryCloudTest, setPrimaryCloudTest] = useState<CloudTestState>(emptyCloudTest());
+  const [fallbackCloudTest, setFallbackCloudTest] = useState<CloudTestState>(emptyCloudTest());
+  const [overallCloudTest, setOverallCloudTest] = useState<CloudTestState>(emptyCloudTest());
+  const [primaryCloudTesting, setPrimaryCloudTesting] = useState(false);
+  const [fallbackCloudTesting, setFallbackCloudTesting] = useState(false);
+  const [overallCloudTesting, setOverallCloudTesting] = useState(false);
 
   const [pickerOpen, setPickerOpen] = useState<"source" | "target" | null>(null);
   const [saving, setSaving] = useState(false);
@@ -186,23 +235,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   async function handleTestAi() {
     setAiTesting(true);
     setAiTestResult(null);
-    // Persist AI settings first so the backend can test them.
-    const aiPayload: Record<string, unknown> = {
-      ai_provider: data.aiProvider,
-      ai_base_url: data.aiBaseUrl || null,
-      ai_model: data.aiModel || null,
-      cloud_ai_provider: data.cloudAiProvider,
-      cloud_ai_base_url: data.cloudAiBaseUrl || null,
-      cloud_ai_model: data.cloudAiModel || null,
-      cloud_ai_fallback_provider: data.cloudAiFallbackProvider,
-      cloud_ai_fallback_model: data.cloudAiFallbackModel || null,
-      recognition_ai_enabled: data.recognitionAiEnabled,
-    };
-    if (data.aiApiKey) aiPayload.ai_api_key = data.aiApiKey;
-    if (data.cloudAiApiKey) aiPayload.cloud_ai_api_key = data.cloudAiApiKey;
-    if (data.cloudAiFallbackApiKey) aiPayload.cloud_ai_fallback_api_key = data.cloudAiFallbackApiKey;
-    await updateSettings(aiPayload);
     try {
+      await persistAiSettingsForTest();
       const result = await testAiConnection();
       setAiTestResult(result);
     } catch (err) {
@@ -224,11 +258,14 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       });
       setCloudFallbackModels(result.models.map((model) => model.id));
       if (!result.success) {
-        setAiTestResult({ success: false, message: result.message ?? "Fallback models could not be loaded" });
+        setFallbackCloudTest({
+          status: "error",
+          message: result.message ?? "Не удалось загрузить список моделей",
+        });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Fallback models could not be loaded";
-      setAiTestResult({ success: false, message: msg });
+      const msg = err instanceof Error ? err.message : "Не удалось загрузить список моделей";
+      setFallbackCloudTest({ status: "error", message: msg });
     } finally {
       setCloudFallbackSearching(false);
     }
@@ -237,7 +274,6 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   async function handleSearchCloudModels() {
     setCloudSearching(true);
     setCloudModels([]);
-    setAiTestResult(null);
     try {
       const result = await getCloudAiModels({
         provider: data.cloudAiProvider,
@@ -246,19 +282,40 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       });
       setCloudModels(result.models.map((model) => model.id));
       if (!result.success) {
-        setAiTestResult({ success: false, message: result.message ?? "Cloud models could not be loaded" });
+        setPrimaryCloudTest({
+          status: "error",
+          message: result.message ?? "Не удалось загрузить список моделей",
+        });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Cloud models could not be loaded";
-      setAiTestResult({ success: false, message: msg });
+      const msg = err instanceof Error ? err.message : "Не удалось загрузить список моделей";
+      setPrimaryCloudTest({ status: "error", message: msg });
     } finally {
       setCloudSearching(false);
     }
   }
 
+  async function persistAiSettingsForTest() {
+    const aiPayload: Record<string, unknown> = {
+      ai_provider: data.aiProvider,
+      ai_base_url: data.aiBaseUrl || null,
+      ai_model: data.aiModel || null,
+      cloud_ai_provider: data.cloudAiProvider,
+      cloud_ai_base_url: data.cloudAiBaseUrl || null,
+      cloud_ai_model: data.cloudAiModel || null,
+      cloud_ai_fallback_provider: data.cloudAiFallbackProvider,
+      cloud_ai_fallback_model: data.cloudAiFallbackModel || null,
+      recognition_ai_enabled: data.recognitionAiEnabled,
+    };
+    if (data.aiApiKey) aiPayload.ai_api_key = data.aiApiKey;
+    if (data.cloudAiApiKey) aiPayload.cloud_ai_api_key = data.cloudAiApiKey;
+    if (data.cloudAiFallbackApiKey) aiPayload.cloud_ai_fallback_api_key = data.cloudAiFallbackApiKey;
+    await updateSettings(aiPayload);
+  }
+
   async function handleTestCloudAi() {
-    setAiTesting(true);
-    setAiTestResult(null);
+    setPrimaryCloudTesting(true);
+    setPrimaryCloudTest(emptyCloudTest());
     try {
       const result = await testCloudAi({
         provider: data.cloudAiProvider,
@@ -266,21 +323,18 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         api_key: data.cloudAiApiKey || null,
         base_url: data.cloudAiBaseUrl || null,
       });
-      setAiTestResult({
-        success: result.ok,
-        message: result.ok ? `Cloud AI connected in ${result.duration_ms} ms` : (result.error ?? "Cloud AI test failed"),
-      });
+      setPrimaryCloudTest(cloudTestFromResult(result));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Cloud AI test failed";
-      setAiTestResult({ success: false, message: msg });
+      const msg = err instanceof Error ? err.message : "Проверка основной модели не удалась";
+      setPrimaryCloudTest({ status: "error", message: humanizeAiError(msg) });
     } finally {
-      setAiTesting(false);
+      setPrimaryCloudTesting(false);
     }
   }
 
   async function handleTestCloudFallbackAi() {
-    setAiTesting(true);
-    setAiTestResult(null);
+    setFallbackCloudTesting(true);
+    setFallbackCloudTest(emptyCloudTest());
     try {
       const result = await testCloudAi({
         provider: data.cloudAiFallbackProvider,
@@ -288,15 +342,43 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         api_key: data.cloudAiFallbackApiKey || data.cloudAiApiKey || null,
         base_url: data.cloudAiBaseUrl || null,
       });
-      setAiTestResult({
-        success: result.ok,
-        message: result.ok ? `Fallback cloud connected in ${result.duration_ms} ms` : (result.error ?? "Fallback test failed"),
-      });
+      setFallbackCloudTest(cloudTestFromResult(result));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Fallback test failed";
-      setAiTestResult({ success: false, message: msg });
+      const msg = err instanceof Error ? err.message : "Проверка запасной модели не удалась";
+      setFallbackCloudTest({ status: "error", message: humanizeAiError(msg) });
     } finally {
-      setAiTesting(false);
+      setFallbackCloudTesting(false);
+    }
+  }
+
+  async function handleTestAllAiConnections() {
+    setOverallCloudTesting(true);
+    setOverallCloudTest(emptyCloudTest());
+    try {
+      await persistAiSettingsForTest();
+      const result = await recognitionPreflight();
+      setPrimaryCloudTest(cloudTestFromResult(result.cloud));
+      if (result.cloud_fallback) {
+        setFallbackCloudTest(cloudTestFromResult(result.cloud_fallback));
+      }
+      if (result.ok) {
+        setOverallCloudTest({
+          status: "success",
+          message: result.warning
+            ? `AI-подключения работают. ${result.warning}`
+            : "Все AI-подключения работают.",
+        });
+      } else {
+        setOverallCloudTest({
+          status: "error",
+          message: result.message ?? "Проверка AI не пройдена.",
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Проверка AI не удалась";
+      setOverallCloudTest({ status: "error", message: humanizeAiError(msg) });
+    } finally {
+      setOverallCloudTesting(false);
     }
   }
 
@@ -641,10 +723,15 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                         </label>
                       ) : null}
                       <div className="form-actions">
-                        <button type="button" disabled={aiTesting || !data.cloudAiModel} onClick={() => void handleTestCloudAi()}>
-                          {aiTesting ? "Проверка..." : "Проверить основную модель"}
+                        <button
+                          type="button"
+                          disabled={primaryCloudTesting || !data.cloudAiModel}
+                          onClick={() => void handleTestCloudAi()}
+                        >
+                          {primaryCloudTesting ? "Проверка..." : "Проверить основную модель"}
                         </button>
                       </div>
+                      <CloudTestMessage test={primaryCloudTest} />
                     </>
                   ) : null}
 
@@ -710,14 +797,27 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       <div className="form-actions">
                         <button
                           type="button"
-                          disabled={aiTesting || !data.cloudAiFallbackModel}
+                          disabled={fallbackCloudTesting || !data.cloudAiFallbackModel}
                           onClick={() => void handleTestCloudFallbackAi()}
                         >
-                          {aiTesting ? "Проверка..." : "Проверить запасную модель"}
+                          {fallbackCloudTesting ? "Проверка..." : "Проверить запасную модель"}
                         </button>
                       </div>
+                      <CloudTestMessage test={fallbackCloudTest} />
                     </>
                   ) : null}
+                  {data.cloudAiProvider !== "none" ? (
+                    <div className="form-actions">
+                      <button
+                        type="button"
+                        disabled={overallCloudTesting}
+                        onClick={() => void handleTestAllAiConnections()}
+                      >
+                        {overallCloudTesting ? "Проверка..." : "Проверить всё AI-подключение"}
+                      </button>
+                    </div>
+                  ) : null}
+                  <CloudTestMessage test={overallCloudTest} />
                 </>
               ) : null}
 

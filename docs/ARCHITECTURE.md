@@ -98,6 +98,14 @@ Cloud model discovery is provider-backed:
 
 Secret handling rejects empty strings and known placeholders such as `MediaOrganizer_API_Key`, `YOUR_API_KEY`, and `PASTE_API_KEY_HERE`. HTTP errors are sanitized before they are returned to the UI so query parameters such as `key=...` and bearer tokens are redacted.
 
+### Cloud AI retry and fallback
+
+Cloud recognition and preflight use `post_with_retry` for Gemini and OpenAI-compatible cloud clients (when an API key is present). Retryable conditions: HTTP `429`, `500`, `502`, `503`, `504`, network timeouts, and connection errors. Up to 3 attempts with 1s and 2s backoff. Non-retryable: `400`, `401`, `403`, `404`, and JSON validation failures after a response is received.
+
+Preflight decision: `ok = local_ok AND (primary_cloud_ok OR fallback_cloud_ok)`. If primary fails temporarily and fallback succeeds, the pipeline continues with a warning. If both cloud models fail, analysis stops with a Russian human-readable message. Technical error text is stored separately from `human_message` for the UI details panel.
+
+Error classification (`error_type`): `temporary_unavailable`, `rate_limited`, `auth_error`, `model_not_found`, `timeout`, `connection_error`, `not_configured`, `invalid_json`.
+
 Manual corrections update the media item, save a correction row, and upsert remove-token rules. Token rules are applied on later normalization passes so names like release groups, streaming tags, and team names can be removed consistently.
 
 Each `MediaItem` stores recognition diagnostics for local AI and Gemini: status (`not_run`, `success`, `failed`, `skipped`), duration, model, JSON validity, and sanitized error text. The UI shows these diagnostics next to parser/AI/Gemini titles and TMDB query priorities.

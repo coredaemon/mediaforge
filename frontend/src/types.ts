@@ -290,6 +290,9 @@ export interface LlmPreflightCheck {
   message: string | null;
   error: string | null;
   error_type: string | null;
+  human_message?: string | null;
+  attempts?: number;
+  retryable?: boolean;
 }
 
 export interface RecognitionPreflightResult {
@@ -298,6 +301,7 @@ export interface RecognitionPreflightResult {
   cloud: LlmPreflightCheck;
   cloud_fallback?: LlmPreflightCheck | null;
   warning?: string | null;
+  message?: string | null;
 }
 
 export interface ReviewDecisionRequest {

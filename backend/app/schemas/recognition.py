@@ -67,6 +67,9 @@ class LlmPreflightCheck(BaseModel):
     message: str | None = None
     error: str | None = None
     error_type: str | None = None
+    human_message: str | None = None
+    attempts: int = 1
+    retryable: bool = False
 
 
 class RecognitionPreflightResult(BaseModel):
@@ -75,3 +78,4 @@ class RecognitionPreflightResult(BaseModel):
     cloud: LlmPreflightCheck
     cloud_fallback: LlmPreflightCheck | None = None
     warning: str | None = None
+    message: str | None = None
