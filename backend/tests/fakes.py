@@ -116,7 +116,11 @@ class FakeTitleNormalizer:
         self.preflight_calls: list[str] = []
 
     async def normalize(
-        self, original_name: str, parser_title: str | None, parser_year: int | None
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context=None,
     ) -> NormalizeParseResult:
         self.calls.append((original_name, parser_title, parser_year))
         if self.fail:

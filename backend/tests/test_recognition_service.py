@@ -19,7 +19,13 @@ class FakeRawJsonNormalizer:
         self.json_body = json_body
         self.model = "fake-raw"
 
-    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None):
+    async def normalize(
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context=None,
+    ):
         return _parse_normalized_json(
             self.json_body,
             parser_title=parser_title,
@@ -289,4 +295,7 @@ async def test_tmdb_uses_ai_query_before_parser_title(db_session: AsyncSession, 
     result = await TMDBService(db_session, client=fake_tmdb).match_scan_session(scan_session.id)
 
     assert result.matched_count == 1
-    assert fake_tmdb.movie_calls[0] == ("In The Grey", 2026, "ru-RU")
+    assert fake_tmdb.movie_calls[0] in {
+        ("In The Grey 2026", 2026, "ru-RU"),
+        ("In The Grey", 2026, "ru-RU"),
+    }

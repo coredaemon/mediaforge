@@ -269,3 +269,30 @@ Lookup creates or updates `TmdbMatchCandidate` rows but does not auto-select unl
 `RecognitionService.preflight()` checks local LLM, primary cloud, and fallback cloud. Pipeline is allowed when local + (primary OR fallback) succeed. Warning is returned when only fallback works.
 
 During `resolve_with_gemini`, primary cloud is tried per item; on failure the fallback client is used. Diagnostics are stored in `gemini_*` item fields including which model actually ran.
+
+## Sidecar Metadata Extraction
+
+After parse, `SidecarMetadataService` scans the video folder for NFO and image sidecars. Parsed NFO fields populate `MediaItem.sidecar_*` and `local_poster_path`. Status: `not_found`, `found`, `parse_failed`.
+
+## ID Priority Flow
+
+Before title search, `TMDBService._try_priority_id_lookup` tries IDs in order:
+
+1. `manual_tmdb_id` / `manual_imdb_id` / `manual_tvdb_id`
+2. `sidecar_tmdb_id` / `sidecar_imdb_id` / `sidecar_tvdb_id`
+3. memory IDs when `reused_from_memory`
+4. title/year TMDB search with Cyrillic-first queries
+
+`match_source` records why an item matched (`sidecar_imdb_id`, `tmdb_search`, `manual_override`, etc.).
+
+## Local Poster vs TMDB Match
+
+A local poster from disk may be shown with badge `Локальный постер`, but `Найдено в TMDB` requires `tmdb_id`. UI badges are computed centrally in `frontend/src/badges.ts`.
+
+## Item Badge / Status Consistency
+
+Badges are mutually consistent: an item with `tmdb_id` shows `Найдено в TMDB`; `manual_override` shows `Исправлено вручную`; sidecar ID match shows `Найдено по локальному ID`. Technical AI diagnostics are collapsed under `Технические детали распознавания`.
+
+## Manual Lookup Item Update
+
+`POST /items/{id}/tmdb-lookup` and candidate select update all match fields (`tmdb_id`, external IDs, localized metadata, `review_decision`, memory). Frontend reloads items after select/lookup.

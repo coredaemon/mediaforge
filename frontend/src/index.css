@@ -891,3 +891,17 @@ th {
   padding: 0.5rem 0;
   border-bottom: 1px solid #e5e7eb;
 }
+
+.recognition-tech-details {
+  margin-top: 0.75rem;
+}
+
+.manual-review-hint {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 0.85rem;
+}
+
+.manual-review-panel h4 {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.95rem;
+}

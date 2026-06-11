@@ -14,6 +14,7 @@ from ..repositories.recognition_memory_repository import (
     load_tokens,
 )
 from ..repositories.scan_session_repository import ScanSessionRepository
+from ..schemas.recognition_context import RecognitionContext
 from ..schemas.recognition import (
     NormalizedTitle,
     RecognitionCorrectionCreate,
@@ -155,7 +156,7 @@ class RecognitionService:
 
         for item in items:
             started = time.perf_counter()
-            if item.reused_from_memory or item.status == MediaItemStatus.MATCHED:
+            if item.reused_from_memory or item.status == MediaItemStatus.MATCHED or item.tmdb_id:
                 self._mark_ai_diagnostics(
                     item,
                     use_gemini=use_gemini,
@@ -186,13 +187,24 @@ class RecognitionService:
                     )
                     error_count += 1
                     continue
+                context = _build_recognition_context(item)
                 try:
-                    parse_result = await active_client.normalize(item.original_title or "", rule_title, item.year)
+                    parse_result = await active_client.normalize(
+                        item.original_title or "",
+                        rule_title,
+                        item.year,
+                        context,
+                    )
                 except Exception as primary_exc:
                     if fallback_client is not None and active_client is not fallback_client:
                         active_client = fallback_client
                         used_fallback = True
-                        parse_result = await active_client.normalize(item.original_title or "", rule_title, item.year)
+                        parse_result = await active_client.normalize(
+                            item.original_title or "",
+                            rule_title,
+                            item.year,
+                            context,
+                        )
                     else:
                         raise primary_exc
                 self._apply_suggestion(item, parse_result.title, rule_title=rule_title, use_gemini=use_gemini)
@@ -385,6 +397,30 @@ def _missing_cloud_preflight(provider: str | None, model: str | None, key: str |
         model=model,
         error="Cloud AI client is not configured.",
         error_type="not_configured",
+    )
+
+
+def _build_recognition_context(item: MediaItem) -> RecognitionContext:
+    from pathlib import Path
+
+    folder_name = None
+    if item.original_title:
+        folder_name = Path(item.original_title).parent.name
+    return RecognitionContext(
+        folder_name=folder_name,
+        sidecar_title=item.sidecar_title,
+        sidecar_year=item.sidecar_year,
+        sidecar_overview=item.sidecar_overview,
+        sidecar_tmdb_id=item.sidecar_tmdb_id,
+        sidecar_imdb_id=item.sidecar_imdb_id,
+        sidecar_tvdb_id=item.sidecar_tvdb_id,
+        sidecar_source_path=item.sidecar_source_path,
+        local_poster_path=item.local_poster_path,
+        local_backdrop_path=item.local_backdrop_path,
+        memory_tmdb_id=item.tmdb_id if item.reused_from_memory else None,
+        memory_imdb_id=item.imdb_id if item.reused_from_memory else None,
+        memory_tvdb_id=item.tvdb_id if item.reused_from_memory else None,
+        failed_tmdb_queries=item.tmdb_queries or [],
     )
 
 

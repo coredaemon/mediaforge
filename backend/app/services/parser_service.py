@@ -11,6 +11,7 @@ from ..repositories.scan_session_repository import ScanSessionRepository
 from ..utils.media_name_parser import parse_media_filename
 from .processed_media_service import ProcessedMediaService
 from .scan_session_service import ScanSessionNotFoundError
+from .sidecar_metadata_service import SidecarMetadataService
 
 
 class ParserService:
@@ -20,6 +21,7 @@ class ParserService:
         self.media_files = MediaFileRepository(session)
         self.media_items = MediaItemRepository(session)
         self.processed_media = ProcessedMediaService(session)
+        self.sidecar_metadata = SidecarMetadataService(session)
 
     async def parse_scan_session(self, session_id: int) -> ScanSession:
         scan_session = await self.scan_sessions.get(session_id)
@@ -48,6 +50,8 @@ class ParserService:
                 )
                 self.processed_media.apply_record_to_item(memory_record, media_item, media_file)
                 await self.media_files.link_to_media_item(media_file, media_item.id)
+                await self.sidecar_metadata.enrich_item_from_sidecars(media_item, media_file)
+                await self.sidecar_metadata.link_sidecar_files(session_id, media_item.id, video_file=media_file)
                 continue
 
             candidate = parse_media_filename(media_file.file_name)
@@ -68,6 +72,8 @@ class ParserService:
                 )
             )
             await self.media_files.link_to_media_item(media_file, media_item.id)
+            await self.sidecar_metadata.enrich_item_from_sidecars(media_item, media_file)
+            await self.sidecar_metadata.link_sidecar_files(session_id, media_item.id, video_file=media_file)
 
         scan_session.status = ScanSessionStatus.PARSED
         scan_session.finished_at = datetime.now(UTC)

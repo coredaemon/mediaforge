@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 
 import httpx
@@ -197,6 +198,12 @@ class TMDBService:
             item.manual_imdb_id = imdb_id
             item.manual_tvdb_id = tvdb_id
             item.manual_media_type = resolved_type
+            if tmdb_id is not None:
+                item.match_source = "manual_tmdb_id"
+            elif imdb_id:
+                item.match_source = "manual_imdb_id"
+            elif tvdb_id is not None:
+                item.match_source = "manual_tvdb_id"
             video_file = await self.media_files.get_video_for_media_item(item.id)
             await self.processed_media.record_from_item(item, video_file, session_id=item.scan_session_id)
 
@@ -254,6 +261,7 @@ class TMDBService:
         item.needs_review = False
         item.review_decision = ReviewDecision.MANUAL_OVERRIDE
         item.reviewed_at = item.reviewed_at or datetime.now(UTC)
+        item.match_source = item.match_source or "manual_tmdb_id"
 
         video_file = await self.media_files.get_video_for_media_item(item.id)
         await self.processed_media.record_from_item(item, video_file, session_id=item.scan_session_id)
@@ -263,6 +271,11 @@ class TMDBService:
 
     async def _match_item(self, item: MediaItem) -> MediaItemStatus:
         item.status = MediaItemStatus.MATCHING
+        await self.session.flush()
+
+        if await self._try_priority_id_lookup(item):
+            return item.status
+
         item.tmdb_id = None
         item.tmdb_media_type = None
         item.matched_title = None
@@ -319,6 +332,7 @@ class TMDBService:
             item.metadata_language = best_candidate.metadata_language
             item.status = MediaItemStatus.MATCHED
             item.needs_review = False
+            item.match_source = item.match_source or "tmdb_search"
         else:
             item.status = MediaItemStatus.NEEDS_REVIEW
             item.needs_review = True
@@ -337,6 +351,106 @@ class TMDBService:
 
         await self.session.flush()
         return item.status
+
+    async def _try_priority_id_lookup(self, item: MediaItem) -> bool:
+        await self._ensure_client()
+        for source, lookup in _priority_external_id_lookups(item):
+            try:
+                candidate = await self._lookup_external_id(item, lookup, source)
+            except (TmdbLookupNotFoundError, TmdbLookupError, httpx.HTTPError, Exception):
+                continue
+            if candidate is None:
+                continue
+            await self.candidates.clear_selected_for_media_item(item.id)
+            candidate.is_selected = True
+            await self._apply_candidate_to_item(item, candidate, match_source=source)
+            await self.session.flush()
+            return True
+        return False
+
+    async def _lookup_external_id(
+        self,
+        item: MediaItem,
+        lookup: dict[str, int | str],
+        source: str,
+    ) -> TmdbMatchCandidate | None:
+        tmdb_id = lookup.get("tmdb_id")
+        imdb_id = lookup.get("imdb_id")
+        tvdb_id = lookup.get("tvdb_id")
+        media_type = lookup.get("media_type")
+        if isinstance(media_type, str):
+            media_type = media_type
+        elif item.media_type == MediaType.MOVIE:
+            media_type = "movie"
+        else:
+            media_type = "tv"
+
+        details = None
+        result = None
+        if tmdb_id is not None:
+            try:
+                details = await fetch_localized_details(self.client, tmdb_id=int(tmdb_id), media_type=str(media_type))
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404 and str(media_type) == "movie":
+                    details = await fetch_localized_details(self.client, tmdb_id=int(tmdb_id), media_type="tv")
+                else:
+                    raise
+            result = _search_result_from_details(details)
+        elif imdb_id:
+            results = await self.client.find_by_external_id(str(imdb_id), "imdb_id")
+            if not results:
+                return None
+            picked = _pick_find_result(results, str(media_type))
+            details = await fetch_localized_details(self.client, tmdb_id=picked.tmdb_id, media_type=picked.media_type)
+            result = _search_result_from_details(details)
+        elif tvdb_id is not None:
+            results = await self.client.find_by_external_id(str(tvdb_id), "tvdb_id")
+            if not results:
+                return None
+            picked = _pick_find_result(results, "tv")
+            details = await fetch_localized_details(self.client, tmdb_id=picked.tmdb_id, media_type=picked.media_type)
+            result = _search_result_from_details(details)
+        else:
+            return None
+
+        candidate = await self.candidates.create(self._candidate_from_result(item.id, result, 1.0))
+        if details:
+            apply_details_to_candidate(candidate, details)
+        candidate.score = 1.0
+        await self.session.flush()
+        return candidate
+
+    async def _apply_candidate_to_item(
+        self,
+        item: MediaItem,
+        candidate: TmdbMatchCandidate,
+        *,
+        match_source: str,
+    ) -> None:
+        try:
+            details = await fetch_localized_details(
+                self.client,
+                tmdb_id=candidate.tmdb_id,
+                media_type=candidate.media_type,
+            )
+            apply_details_to_candidate(candidate, details)
+            apply_details_to_item(item, details)
+        except Exception:
+            item.poster_url = candidate.poster_url or tmdb_image_url(candidate.poster_path)
+            item.backdrop_url = candidate.backdrop_url or tmdb_image_url(candidate.backdrop_path, "w780")
+            item.imdb_id = candidate.imdb_id
+            item.tvdb_id = candidate.tvdb_id
+            item.wikidata_id = candidate.wikidata_id
+        item.tmdb_id = candidate.tmdb_id
+        item.tmdb_media_type = candidate.media_type
+        item.matched_title = candidate.title
+        item.matched_year = candidate.year
+        item.match_confidence = candidate.score
+        item.localized_title = candidate.title
+        item.localized_overview = candidate.overview or item.localized_overview
+        item.status = MediaItemStatus.MATCHED
+        item.needs_review = False
+        item.match_source = match_source
 
     async def _enrich_candidate(self, candidate: TmdbMatchCandidate) -> None:
         try:
@@ -423,9 +537,19 @@ class TmdbLookupNotFoundError(LookupError):
     """Raised when TMDB cannot resolve the provided external id."""
 
 
+def _has_cyrillic(text: str) -> bool:
+    return any("\u0400" <= ch <= "\u04FF" for ch in text)
+
+
+def _query_already_contains_year(query: str, year: int) -> bool:
+    return re.search(rf"\b{year}\b", query) is not None
+
+
 def _priority_queries(item: MediaItem) -> list[str]:
+    year = _priority_year(item)
     values: list[str | None] = [
         *(item.tmdb_queries or []),
+        item.sidecar_title,
         item.gemini_clean_title,
         item.ai_clean_title,
         item.parsed_title,
@@ -435,15 +559,49 @@ def _priority_queries(item: MediaItem) -> list[str]:
     seen: set[str] = set()
     for value in values:
         normalized = (value or "").strip()
+        if not normalized:
+            continue
+        if year is not None and not _query_already_contains_year(normalized, year):
+            with_year = f"{normalized} {year}".strip()
+            key = with_year.lower()
+            if key not in seen:
+                queries.append(with_year)
+                seen.add(key)
         key = normalized.lower()
-        if normalized and key not in seen:
+        if key not in seen:
             queries.append(normalized)
             seen.add(key)
-    return queries[:5]
+    cyrillic = [q for q in queries if _has_cyrillic(q)]
+    latin = [q for q in queries if q not in cyrillic]
+    return (cyrillic + latin)[:6]
 
 
 def _priority_year(item: MediaItem) -> int | None:
-    return item.gemini_year or item.ai_year or item.year
+    return item.gemini_year or item.ai_year or item.sidecar_year or item.year
+
+
+def _priority_external_id_lookups(item: MediaItem) -> list[tuple[str, dict[str, int | str]]]:
+    media_type = "movie" if item.media_type == MediaType.MOVIE else "tv"
+    lookups: list[tuple[str, dict[str, int | str]]] = []
+    if item.manual_tmdb_id:
+        lookups.append(("manual_tmdb_id", {"tmdb_id": item.manual_tmdb_id, "media_type": media_type}))
+    if item.manual_imdb_id:
+        lookups.append(("manual_imdb_id", {"imdb_id": item.manual_imdb_id, "media_type": media_type}))
+    if item.manual_tvdb_id:
+        lookups.append(("manual_tvdb_id", {"tvdb_id": item.manual_tvdb_id, "media_type": media_type}))
+    if item.sidecar_tmdb_id:
+        lookups.append(("sidecar_tmdb_id", {"tmdb_id": item.sidecar_tmdb_id, "media_type": media_type}))
+    if item.sidecar_imdb_id:
+        lookups.append(("sidecar_imdb_id", {"imdb_id": item.sidecar_imdb_id, "media_type": media_type}))
+    if item.sidecar_tvdb_id:
+        lookups.append(("sidecar_tvdb_id", {"tvdb_id": item.sidecar_tvdb_id, "media_type": media_type}))
+    if item.tmdb_id and item.reused_from_memory:
+        lookups.append(("memory", {"tmdb_id": item.tmdb_id, "media_type": item.tmdb_media_type or media_type}))
+    if item.imdb_id and item.reused_from_memory:
+        lookups.append(("memory", {"imdb_id": item.imdb_id, "media_type": media_type}))
+    if item.tvdb_id and item.reused_from_memory:
+        lookups.append(("memory", {"tvdb_id": item.tvdb_id, "media_type": media_type}))
+    return lookups
 
 
 def _normalize_search_media_type(media_type: str) -> str:

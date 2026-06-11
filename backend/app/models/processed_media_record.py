@@ -54,6 +54,10 @@ class ProcessedMediaRecord(Base):
     poster_url: Mapped[str | None] = mapped_column(String(1024))
     backdrop_url: Mapped[str | None] = mapped_column(String(1024))
     metadata_language: Mapped[str | None] = mapped_column(String(16))
+    match_source: Mapped[str | None] = mapped_column(String(64))
+    sidecar_source_path: Mapped[str | None] = mapped_column(Text)
+    local_poster_path: Mapped[str | None] = mapped_column(String(1024))
+    local_backdrop_path: Mapped[str | None] = mapped_column(String(1024))
 
     scan_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     recognition_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

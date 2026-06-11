@@ -23,7 +23,9 @@ import {
   resolveWithGemini,
   selectTmdbCandidate,
 } from "../api";
+import { getItemBadges } from "../badges";
 import { t } from "../i18n";
+import { validateIdLookupInput } from "../validation";
 import { candidateBackdropUrl, candidatePosterUrl, tmdbImageUrl } from "../utils/tmdb";
 import {
   labelMediaItemStatus,
@@ -49,12 +51,12 @@ import type {
 type StepStatus = "pending" | "running" | "done" | "error";
 
 const analysisSteps: { key: string; label: string }[] = [
-  { key: "preflight", label: "AI preflight" },
+  { key: "preflight", label: "Проверка AI" },
   { key: "discover", label: "Сканирование файлов" },
   { key: "parse", label: "Распознавание названий" },
-  { key: "local-ai", label: "Local AI cleanup" },
   { key: "match", label: "Поиск в TMDB" },
-  { key: "gemini", label: "Gemini fallback" },
+  { key: "local-ai", label: "Локальная AI-модель" },
+  { key: "gemini", label: "Запасная облачная модель" },
   { key: "plan", label: "Построение безопасного плана" },
 ];
 
@@ -87,8 +89,16 @@ function detectPathNestingWarning(source: string, target: string): string | null
   return null;
 }
 
-function Badge({ value, label }: { value: string | null | undefined; label: string }) {
-  return <span className={`status-badge ${statusTone(value)}`}>{label}</span>;
+function Badge({
+  value,
+  label,
+  tone,
+}: {
+  value: string | null | undefined;
+  label: string;
+  tone?: BadgeTone;
+}) {
+  return <span className={`status-badge ${tone ?? statusTone(value)}`}>{label}</span>;
 }
 
 function StepBadge({ status }: { status: StepStatus }) {
@@ -151,46 +161,30 @@ function formatPreflightError(result: RecognitionPreflightResult): string {
   return "AI preflight failed.";
 }
 
-function labelReviewDecision(decision: string, status: string): { label: string; tone: BadgeTone } {
-  switch (decision) {
-    case "approved":
-      return { label: "Подтверждено", tone: "success" };
-    case "ignored":
-      return { label: "Не добавлять", tone: "danger" };
-    case "deferred":
-      return { label: "Отложено", tone: "warning" };
-    case "manual_override":
-      return { label: "Исправлено вручную", tone: "info" };
-    default:
-      if (status === "MATCHED") return { label: "Автоматически найдено", tone: "success" };
-      return { label: "Требует проверки", tone: "warning" };
-  }
-}
-
 function formatCheckStatus(check: RecognitionPreflightResult["local"] | null | undefined): string {
-  if (!check) return "not run";
-  if (check.ok) return `works, ${check.duration_ms} ms`;
-  if (check.error_type === "invalid_json") return "response received, JSON invalid";
-  return check.error_type ? `error: ${check.error_type}` : "error";
+  if (!check) return "не запускалось";
+  if (check.ok) return `работает, ${check.duration_ms} мс`;
+  if (check.error_type === "invalid_json") return "ответ получен, JSON некорректен";
+  return check.error_type ? `ошибка: ${check.error_type}` : "ошибка";
 }
 
 function PreflightPanel({ result, status }: { result: RecognitionPreflightResult | null; status: StepStatus }) {
   return (
     <div className="preflight-panel">
       <div className="section-heading">
-        <strong>AI preflight</strong>
+        <strong>Проверка AI</strong>
         <StepBadge status={status} />
       </div>
       <div className="preflight-grid">
         <div>
-          <span>Local LLM</span>
+          <span>Локальная AI-модель</span>
           <strong>{formatCheckStatus(result?.local)}</strong>
           {result?.local.model ? <small>{result.local.model}</small> : null}
           {result?.local.endpoint ? <small>{result.local.endpoint}</small> : null}
           {result?.local.error ? <small className="error-text">{result.local.error}</small> : null}
         </div>
         <div>
-          <span>Cloud LLM (primary)</span>
+          <span>Облачная AI-модель (основная)</span>
           <strong>{formatCheckStatus(result?.cloud)}</strong>
           {result?.cloud.model ? <small>{result.cloud.model}</small> : null}
           {result?.cloud.provider ? <small>{result.cloud.provider}</small> : null}
@@ -198,7 +192,7 @@ function PreflightPanel({ result, status }: { result: RecognitionPreflightResult
         </div>
         {result?.cloud_fallback ? (
           <div>
-            <span>Cloud LLM (fallback)</span>
+            <span>Облачная AI-модель (запасная)</span>
             <strong>{formatCheckStatus(result.cloud_fallback)}</strong>
             {result.cloud_fallback.model ? <small>{result.cloud_fallback.model}</small> : null}
             {result.cloud_fallback.error ? <small className="error-text">{result.cloud_fallback.error}</small> : null}
@@ -368,8 +362,8 @@ export function SessionDetailPage() {
       });
       await runStep("discover", () => discoverSession(numId));
       await runStep("parse", () => parseSession(numId));
-      await runStep("local-ai", () => normalizeLocalAi(numId));
       await runStep("match", () => matchTmdbSession(numId));
+      await runStep("local-ai", () => normalizeLocalAi(numId));
       await runStep("gemini", async () => {
         await resolveWithGemini(numId);
         await matchTmdbSession(numId, true);
@@ -392,7 +386,8 @@ export function SessionDetailPage() {
     setSelectedItemId(itemId);
     setError(null);
     try {
-      setCandidates(await listTmdbCandidates(itemId));
+      const loaded = await listTmdbCandidates(itemId);
+      setCandidates([...loaded].sort((a, b) => b.id - a.id));
       requestAnimationFrame(() => {
         candidatesPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -410,6 +405,7 @@ export function SessionDetailPage() {
       async () => {
         await selectTmdbCandidate(selectedItemId, candidateId);
         setCandidates(await listTmdbCandidates(selectedItemId));
+        setItems(await listItems(numId));
       },
       "Кандидат выбран. Теперь можно пересобрать план.",
     );
@@ -627,7 +623,13 @@ export function SessionDetailPage() {
       {selectedItemId !== null ? (
         <section className="panel candidate-panel" ref={candidatesPanelRef}>
           <div className="section-heading">
-            <h3>Кандидаты TMDB для объекта #{selectedItemId}</h3>
+            <h3>
+              Кандидаты TMDB:{" "}
+              {items.find((i) => i.id === selectedItemId)?.localized_title ??
+                items.find((i) => i.id === selectedItemId)?.matched_title ??
+                items.find((i) => i.id === selectedItemId)?.parsed_title ??
+                `#${selectedItemId}`}
+            </h3>
             <button type="button" onClick={() => setSelectedItemId(null)}>Закрыть</button>
           </div>
           <ManualCandidateSearch
@@ -778,8 +780,10 @@ function MediaItemCard({
   onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
   onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
 }) {
-  const poster = item.poster_url ?? tmdbImageUrl(item.poster_path);
-  const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `Object #${item.id}`;
+  const localPoster = item.local_poster_path ?? item.sidecar_poster_path;
+  const poster = item.poster_url ?? tmdbImageUrl(item.poster_path) ?? (localPoster ? `file:///${localPoster.replace(/\\/g, "/")}` : null);
+  const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `Объект #${item.id}`;
+  const badges = getItemBadges(item);
   return (
     <div className={`item-card visual-item-card ${item.reused_from_memory ? "memory-reused" : ""}`}>
       <div className="visual-item-layout">
@@ -799,13 +803,9 @@ function MediaItemCard({
               </p>
             </div>
             <div className="item-badges">
-              {variant === "matched" ? <Badge value="MATCHED" label="Найдено в TMDB" /> : null}
-              {item.reused_from_memory ? <Badge value="MEMORY" label="Уже обработано ранее" /> : null}
-              <Badge
-                value={item.review_decision}
-                label={labelReviewDecision(item.review_decision, item.status).label}
-              />
-              <Badge value={item.status} label={labelMediaItemStatus(item.status)} />
+              {badges.map((badge) => (
+                <Badge key={badge.key} value={badge.key} label={badge.label} tone={badge.tone} />
+              ))}
             </div>
           </div>
           {variant === "review" ? <p className="muted">Файл: {item.original_title}</p> : null}
@@ -813,11 +813,14 @@ function MediaItemCard({
             <span>TMDB ID: {fmt(item.tmdb_id)}</span>
             <span>IMDb: {fmt(item.imdb_id)}</span>
             {item.tvdb_id ? <span>TVDB: {fmt(item.tvdb_id)}</span> : null}
-            <span>Confidence: {formatPercent(item.match_confidence ?? item.ai_confidence ?? item.confidence)}</span>
+            <span>Уверенность: {formatPercent(item.match_confidence ?? item.ai_confidence ?? item.confidence)}</span>
           </div>
           {item.localized_overview ? <p className="item-overview">{item.localized_overview}</p> : null}
-          {variant === "review" ? <RecognitionEvidence item={item} /> : null}
-          {variant === "review" ? <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} /> : null}
+          <details className="recognition-tech-details">
+            <summary>Технические детали распознавания</summary>
+            <RecognitionEvidence item={item} />
+            {variant === "review" ? <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} /> : null}
+          </details>
           <ManualReviewPanel item={item} busy={busy} onCandidates={onCandidates} onDecision={onDecision} />
           <div className="item-actions">
             <button type="button" onClick={() => void onCandidates(item.id)}>
@@ -855,7 +858,7 @@ function CandidateReviewCard({
               {fmt(candidate.original_title)} · {labelMediaType(candidate.media_type)} · {fmt(candidate.year)}
             </p>
           </div>
-          {candidate.is_selected ? <Badge value="MATCHED" label="Выбран" /> : null}
+          {candidate.is_selected ? <Badge value="MATCHED" label="Выбранный вариант" tone="success" /> : null}
         </div>
         {candidate.overview_is_fallback ? (
           <p className="message warning">Описание на русском не найдено, показан английский вариант.</p>
@@ -890,7 +893,7 @@ function AiDiagnosticMessage({
   validJson,
   error,
 }: {
-  provider: "Local AI" | "Gemini";
+  provider: "Локальная AI-модель" | "Облачная AI-модель";
   status: string | null;
   validJson: boolean | null;
   error: string | null;
@@ -914,27 +917,29 @@ function AiDiagnosticMessage({
 function RecognitionEvidence({ item }: { item: MediaItem }) {
   return (
     <div className="recognition-evidence">
-      <span>Parser: {fmt(item.parsed_title)} {item.year ? `(${item.year})` : ""}</span>
+      <span>Парсер: {fmt(item.parsed_title)} {item.year ? `(${item.year})` : ""}</span>
+      {item.sidecar_source_path ? <span>Источник NFO: {item.sidecar_source_path}</span> : null}
+      {item.match_source ? <span>Источник совпадения: {item.match_source}</span> : null}
       <AiDiagnosticMessage
-        provider="Local AI"
+        provider="Локальная AI-модель"
         status={item.local_ai_status}
         validJson={item.local_ai_response_valid_json}
         error={item.local_ai_error}
       />
-      <span>Local AI duration: {fmt(item.local_ai_duration_ms)} ms</span>
-      <span>Local AI model: {fmt(item.local_ai_model)}</span>
-      <span>Local AI result: {fmt(item.ai_clean_title)} {formatPercent(item.ai_confidence)}</span>
+      <span>Локальная AI: {fmt(item.local_ai_duration_ms)} мс</span>
+      <span>Модель: {fmt(item.local_ai_model)}</span>
+      <span>Результат: {fmt(item.ai_clean_title)} {formatPercent(item.ai_confidence)}</span>
       <AiDiagnosticMessage
-        provider="Gemini"
+        provider="Облачная AI-модель"
         status={item.gemini_status}
         validJson={item.gemini_response_valid_json}
         error={item.gemini_error}
       />
-      <span>Gemini duration: {fmt(item.gemini_duration_ms)} ms</span>
-      <span>Gemini model: {fmt(item.gemini_model)}</span>
-      <span>Gemini result: {fmt(item.gemini_clean_title)} {formatPercent(item.gemini_confidence)}</span>
-      {item.tmdb_queries?.length ? <span>TMDB queries: {item.tmdb_queries.join(", ")}</span> : null}
-      {item.ai_junk_tokens?.length ? <span>Removed tokens: {item.ai_junk_tokens.join(", ")}</span> : null}
+      <span>Облачная AI: {fmt(item.gemini_duration_ms)} мс</span>
+      <span>Модель: {fmt(item.gemini_model)}</span>
+      <span>Результат: {fmt(item.gemini_clean_title)} {formatPercent(item.gemini_confidence)}</span>
+      {item.tmdb_queries?.length ? <span>Запросы TMDB: {item.tmdb_queries.join(", ")}</span> : null}
+      {item.ai_junk_tokens?.length ? <span>Удалённые токены: {item.ai_junk_tokens.join(", ")}</span> : null}
       {item.ai_explanation ? <span>{item.ai_explanation}</span> : null}
       {item.gemini_explanation ? <span>{item.gemini_explanation}</span> : null}
     </div>
@@ -974,7 +979,7 @@ function CorrectionForm({
 
   return (
     <details className="correction-form">
-      <summary>Manual correction</summary>
+      <summary>Ручное исправление</summary>
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -1022,10 +1027,12 @@ function ManualReviewPanel({
   const [tmdbId, setTmdbId] = useState(String(item.manual_tmdb_id ?? item.tmdb_id ?? ""));
   const [imdbId, setImdbId] = useState(item.manual_imdb_id ?? item.imdb_id ?? "");
   const [tvdbId, setTvdbId] = useState(String(item.manual_tvdb_id ?? item.tvdb_id ?? ""));
+  const [idError, setIdError] = useState<string | null>(null);
 
   return (
     <details className="manual-review-panel" open={item.status !== "MATCHED"}>
       <summary>Ручная проверка</summary>
+      <h4>Найти по названию</h4>
       <div className="manual-review-grid">
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
         <input value={year} onChange={(e) => setYear(e.target.value)} placeholder="Год" inputMode="numeric" />
@@ -1034,9 +1041,6 @@ function ManualReviewPanel({
           <option value="TV_SHOW">Сериал</option>
           <option value="TV_EPISODE">Серия</option>
         </select>
-        <input value={tmdbId} onChange={(e) => setTmdbId(e.target.value)} placeholder="TMDB ID" inputMode="numeric" />
-        <input value={imdbId} onChange={(e) => setImdbId(e.target.value)} placeholder="IMDb ID" />
-        <input value={tvdbId} onChange={(e) => setTvdbId(e.target.value)} placeholder="TVDB ID" inputMode="numeric" />
       </div>
       <div className="manual-review-actions">
         <button
@@ -1055,15 +1059,33 @@ function ManualReviewPanel({
         >
           Искать в TMDB
         </button>
+      </div>
+      <h4>Загрузить по ID</h4>
+      <p className="muted manual-review-hint">
+        Заполните один из ID. TMDB ID используется напрямую. IMDb/TVDB ищутся через TMDB Find.
+      </p>
+      <div className="manual-review-grid">
+        <input value={tmdbId} onChange={(e) => setTmdbId(e.target.value)} placeholder="TMDB ID" inputMode="numeric" />
+        <input value={imdbId} onChange={(e) => setImdbId(e.target.value)} placeholder="IMDb ID" />
+        <input value={tvdbId} onChange={(e) => setTvdbId(e.target.value)} placeholder="TVDB ID" inputMode="numeric" />
+      </div>
+      {idError ? <p className="message error">{idError}</p> : null}
+      <div className="manual-review-actions">
         <button
           type="button"
           disabled={busy || (!tmdbId && !imdbId && !tvdbId)}
           onClick={() =>
             void (async () => {
+              const validation = validateIdLookupInput(tmdbId, imdbId, tvdbId);
+              if (!validation.valid) {
+                setIdError(validation.error ?? "Некорректный ID");
+                return;
+              }
+              setIdError(null);
               await manualTmdbLookup(item.id, {
-                tmdb_id: tmdbId ? Number(tmdbId) : null,
-                imdb_id: imdbId || null,
-                tvdb_id: tvdbId ? Number(tvdbId) : null,
+                tmdb_id: tmdbId.trim() ? Number(tmdbId) : null,
+                imdb_id: imdbId.trim() || null,
+                tvdb_id: tvdbId.trim() ? Number(tvdbId) : null,
                 media_type: mediaType === "MOVIE" ? "movie" : "tv",
               });
               await onCandidates(item.id);
@@ -1208,13 +1230,15 @@ function ReviewDecisionsList({
   return (
     <div className="review-decisions-list">
       {items.map((item) => {
-        const badge = labelReviewDecision(item.review_decision, item.status);
         const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `#${item.id}`;
+        const badges = getItemBadges(item);
         return (
           <div key={item.id} className="review-decision-row">
             <div>
               <strong>{title}</strong>
-              <Badge value={item.review_decision} label={badge.label} />
+              {badges.map((badge) => (
+                <Badge key={badge.key} value={badge.key} label={badge.label} tone={badge.tone} />
+              ))}
             </div>
             <div className="review-decision-actions">
               <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "approved" })}>

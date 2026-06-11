@@ -53,6 +53,10 @@ class ProcessedMediaRepository:
             "poster_url",
             "backdrop_url",
             "metadata_language",
+            "match_source",
+            "sidecar_source_path",
+            "local_poster_path",
+            "local_backdrop_path",
             "last_session_id",
             "last_media_item_id",
         ):

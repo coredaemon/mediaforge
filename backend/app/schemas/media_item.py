@@ -67,6 +67,21 @@ class MediaItemRead(BaseModel):
     manual_imdb_id: str | None = None
     manual_tvdb_id: int | None = None
     manual_media_type: str | None = None
+    sidecar_title: str | None = None
+    sidecar_original_title: str | None = None
+    sidecar_year: int | None = None
+    sidecar_overview: str | None = None
+    sidecar_tmdb_id: int | None = None
+    sidecar_imdb_id: str | None = None
+    sidecar_tvdb_id: int | None = None
+    sidecar_source_path: str | None = None
+    sidecar_poster_path: str | None = None
+    sidecar_backdrop_path: str | None = None
+    sidecar_metadata_status: str | None = None
+    local_poster_path: str | None = None
+    local_backdrop_path: str | None = None
+    local_logo_path: str | None = None
+    match_source: str | None = None
     created_at: datetime
     updated_at: datetime
 

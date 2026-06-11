@@ -575,9 +575,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
 
               {data.recognitionAiEnabled ? (
                 <>
-                  <h4>Cloud AI primary</h4>
+                  <h4>Основная облачная модель</h4>
                   <label>
-                    Primary provider
+                    Провайдер основной модели
                     <select
                       value={data.cloudAiProvider}
                       onChange={(e) => {
@@ -594,7 +594,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   {data.cloudAiProvider !== "none" ? (
                     <>
                       <label>
-                        Primary API key
+                        API-ключ основной модели
                         <input
                           type="password"
                           value={data.cloudAiApiKey}
@@ -617,14 +617,14 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       ) : null}
                       <div className="form-actions">
                         <button type="button" disabled={cloudSearching} onClick={() => void handleSearchCloudModels()}>
-                          {cloudSearching ? "Searching..." : "Find cloud models"}
+                          {cloudSearching ? "Поиск..." : "Найти модели"}
                         </button>
                       </div>
                       {cloudModels.length > 0 ? (
                         <label>
-                          Cloud model
+                          Модель
                           <select value={data.cloudAiModel} onChange={(e) => update({ cloudAiModel: e.target.value })}>
-                            <option value="">-- select model --</option>
+                            <option value="">— выберите модель —</option>
                             {cloudModels.map((m) => (
                               <option key={m} value={m}>{m}</option>
                             ))}
@@ -642,15 +642,15 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       ) : null}
                       <div className="form-actions">
                         <button type="button" disabled={aiTesting || !data.cloudAiModel} onClick={() => void handleTestCloudAi()}>
-                          {aiTesting ? "Testing..." : "Test primary cloud"}
+                          {aiTesting ? "Проверка..." : "Проверить основную модель"}
                         </button>
                       </div>
                     </>
                   ) : null}
 
-                  <h4>Cloud AI fallback</h4>
+                  <h4>Запасная облачная модель</h4>
                   <label>
-                    Fallback provider
+                    Провайдер запасной модели
                     <select
                       value={data.cloudAiFallbackProvider}
                       onChange={(e) => {
@@ -667,7 +667,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   {data.cloudAiFallbackProvider !== "none" ? (
                     <>
                       <label>
-                        Fallback API key
+                        API-ключ запасной модели
                         <input
                           type="password"
                           value={data.cloudAiFallbackApiKey}
@@ -684,14 +684,14 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       </label>
                       <div className="form-actions">
                         <button type="button" disabled={cloudFallbackSearching} onClick={() => void handleSearchCloudFallbackModels()}>
-                          {cloudFallbackSearching ? "Searching..." : "Find fallback models"}
+                          {cloudFallbackSearching ? "Поиск..." : "Найти модели"}
                         </button>
                       </div>
                       {cloudFallbackModels.length > 0 ? (
                         <label>
-                          Fallback model
+                          Модель
                           <select value={data.cloudAiFallbackModel} onChange={(e) => update({ cloudAiFallbackModel: e.target.value })}>
-                            <option value="">-- select model --</option>
+                            <option value="">— выберите модель —</option>
                             {cloudFallbackModels.map((m) => (
                               <option key={m} value={m}>{m}</option>
                             ))}
@@ -699,7 +699,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                         </label>
                       ) : (
                         <label>
-                          Fallback model
+                          Модель
                           <input
                             value={data.cloudAiFallbackModel}
                             onChange={(e) => update({ cloudAiFallbackModel: e.target.value })}
@@ -713,7 +713,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                           disabled={aiTesting || !data.cloudAiFallbackModel}
                           onClick={() => void handleTestCloudFallbackAi()}
                         >
-                          {aiTesting ? "Testing..." : "Test fallback cloud"}
+                          {aiTesting ? "Проверка..." : "Проверить запасную модель"}
                         </button>
                       </div>
                     </>

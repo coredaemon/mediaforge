@@ -7,6 +7,7 @@ from typing import Any, Protocol
 import httpx
 
 from ..schemas.recognition import LlmPreflightCheck, NormalizedTitle
+from ..schemas.recognition_context import RecognitionContext
 from ..utils.ai_response_normalization import coerce_normalized_title
 
 _TIMEOUT_SECONDS = 90.0
@@ -21,7 +22,11 @@ class NormalizeParseResult:
 
 class TitleNormalizerClient(Protocol):
     async def normalize(
-        self, original_name: str, parser_title: str | None, parser_year: int | None
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context: RecognitionContext | None = None,
     ) -> NormalizeParseResult:
         """Return a normalized title suggestion for one media item."""
 
@@ -35,11 +40,15 @@ class OllamaTitleNormalizer:
         self.model = model or "gemma3"
 
     async def normalize(
-        self, original_name: str, parser_title: str | None, parser_year: int | None
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context: RecognitionContext | None = None,
     ) -> NormalizeParseResult:
         payload = {
             "model": self.model,
-            "prompt": _prompt(original_name, parser_title, parser_year),
+            "prompt": _prompt(original_name, parser_title, parser_year, context),
             "stream": False,
             "format": "json",
         }
@@ -81,12 +90,16 @@ class OpenAICompatibleTitleNormalizer:
         self.api_key = api_key
 
     async def normalize(
-        self, original_name: str, parser_title: str | None, parser_year: int | None
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context: RecognitionContext | None = None,
     ) -> NormalizeParseResult:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": _prompt(original_name, parser_title, parser_year)}],
+            "messages": [{"role": "user", "content": _prompt(original_name, parser_title, parser_year, context)}],
             "temperature": 0,
         }
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
@@ -126,9 +139,13 @@ class GeminiTitleNormalizer:
         self.model = model or "gemini-2.0-flash"
 
     async def normalize(
-        self, original_name: str, parser_title: str | None, parser_year: int | None
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context: RecognitionContext | None = None,
     ) -> NormalizeParseResult:
-        payload = {"contents": [{"parts": [{"text": _prompt(original_name, parser_title, parser_year)}]}]}
+        payload = {"contents": [{"parts": [{"text": _prompt(original_name, parser_title, parser_year, context)}]}]}
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             response = await client.post(url, params={"key": self.api_key}, json=payload)
@@ -283,18 +300,41 @@ def _duration_ms(started: float) -> int:
     return max(0, int((time.perf_counter() - started) * 1000))
 
 
-def _prompt(original_name: str, parser_title: str | None, parser_year: int | None) -> str:
+def _prompt(
+    original_name: str,
+    parser_title: str | None,
+    parser_year: int | None,
+    context: RecognitionContext | None = None,
+) -> str:
+    context = context or RecognitionContext()
+    context_lines = [
+        f"Original filename: {original_name!r}.",
+        f"Parser title: {parser_title!r}. Parser year: {parser_year!r}.",
+        f"Folder name: {context.folder_name!r}.",
+        f"Sidecar title: {context.sidecar_title!r}. Sidecar year: {context.sidecar_year!r}.",
+        f"Sidecar overview: {(context.sidecar_overview or '')[:300]!r}.",
+        f"Sidecar IDs: tmdb={context.sidecar_tmdb_id}, imdb={context.sidecar_imdb_id}, tvdb={context.sidecar_tvdb_id}.",
+        f"Sidecar source: {context.sidecar_source_path!r}.",
+        f"Local poster: {context.local_poster_path!r}. Local backdrop: {context.local_backdrop_path!r}.",
+        f"Memory IDs: tmdb={context.memory_tmdb_id}, imdb={context.memory_imdb_id}, tvdb={context.memory_tvdb_id}.",
+        f"Failed TMDB queries: {context.failed_tmdb_queries}.",
+        f"Language preference: {context.language_preference}.",
+    ]
     return (
         "Normalize a media filename for TMDB search.\n"
+        "If a reliable external ID exists in sidecar or memory context, do not ignore it.\n"
+        "Prefer external IDs over title guesses. AI must not replace ID lookup.\n"
+        "For Russian/Cyrillic titles, preserve Cyrillic in clean_title and first tmdb_queries entry.\n"
+        "Do not translate Russian title to English unless it is original title or fallback query.\n"
         "Return JSON exactly in this shape:\n"
         "{\n"
         '  "media_type": "movie",\n'
-        '  "clean_title": "In the Grey",\n'
+        '  "clean_title": "Отец",\n'
         '  "year": 2026,\n'
         '  "season": null,\n'
         '  "episode": null,\n'
-        '  "junk_tokens": ["AMZN", "New Team", "REPACK", "1080p"],\n'
-        '  "tmdb_queries": ["In the Grey 2026", "In the Grey"],\n'
+        '  "junk_tokens": ["AMZN", "REPACK", "1080p"],\n'
+        '  "tmdb_queries": ["Отец 2026", "Отец"],\n'
         '  "confidence": 0.82,\n'
         '  "needs_review": true,\n'
         '  "explanation": "..."\n'
@@ -303,5 +343,5 @@ def _prompt(original_name: str, parser_title: str | None, parser_year: int | Non
         "Do not return objects inside tmdb_queries.\n"
         "Do not return markdown.\n"
         "Remove release groups, streaming tags, quality/audio/video codecs, and team names.\n"
-        f"Original filename: {original_name!r}. Parser title: {parser_title!r}. Parser year: {parser_year!r}."
+        + "\n".join(context_lines)
     )

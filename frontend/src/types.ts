@@ -98,6 +98,21 @@ export interface MediaItem {
   manual_imdb_id: string | null;
   manual_tvdb_id: number | null;
   manual_media_type: string | null;
+  sidecar_title: string | null;
+  sidecar_original_title: string | null;
+  sidecar_year: number | null;
+  sidecar_overview: string | null;
+  sidecar_tmdb_id: number | null;
+  sidecar_imdb_id: string | null;
+  sidecar_tvdb_id: number | null;
+  sidecar_source_path: string | null;
+  sidecar_poster_path: string | null;
+  sidecar_backdrop_path: string | null;
+  sidecar_metadata_status: string | null;
+  local_poster_path: string | null;
+  local_backdrop_path: string | null;
+  local_logo_path: string | null;
+  match_source: string | null;
   created_at: string;
   updated_at: string;
 }

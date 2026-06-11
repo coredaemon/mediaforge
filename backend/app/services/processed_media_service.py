@@ -89,6 +89,12 @@ class ProcessedMediaService:
         item.gemini_status = "skipped"
         item.local_ai_error = "Reused from processed media memory."
         item.gemini_error = None
+        item.match_source = record.match_source or ("memory" if record.tmdb_id else None)
+        item.sidecar_source_path = record.sidecar_source_path
+        item.local_poster_path = record.local_poster_path
+        item.local_backdrop_path = record.local_backdrop_path
+        if record.tmdb_id and item.status == MediaItemStatus.MATCHED:
+            item.needs_review = False
 
     async def record_from_item(
         self,
@@ -137,6 +143,10 @@ class ProcessedMediaService:
             poster_url=item.poster_url or tmdb_image_url(item.poster_path),
             backdrop_url=item.backdrop_url or tmdb_image_url(item.backdrop_path, "w780"),
             metadata_language=item.metadata_language,
+            match_source=item.match_source,
+            sidecar_source_path=item.sidecar_source_path,
+            local_poster_path=item.local_poster_path,
+            local_backdrop_path=item.local_backdrop_path,
             last_seen_at=now,
             last_scanned_at=now,
             last_recognized_at=now if item.tmdb_id or item.parsed_title else None,
