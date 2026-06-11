@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..db.base import Base
@@ -34,6 +34,19 @@ class MediaItem(Base):
     matched_title: Mapped[str | None] = mapped_column(String(512))
     matched_year: Mapped[int | None] = mapped_column(Integer)
     match_confidence: Mapped[float | None] = mapped_column(Float)
+    ai_clean_title: Mapped[str | None] = mapped_column(String(512))
+    ai_year: Mapped[int | None] = mapped_column(Integer)
+    ai_media_type: Mapped[str | None] = mapped_column(String(32))
+    ai_confidence: Mapped[float | None] = mapped_column(Float)
+    ai_junk_tokens: Mapped[list[str] | None] = mapped_column(JSON)
+    ai_explanation: Mapped[str | None] = mapped_column(Text)
+    gemini_clean_title: Mapped[str | None] = mapped_column(String(512))
+    gemini_year: Mapped[int | None] = mapped_column(Integer)
+    gemini_media_type: Mapped[str | None] = mapped_column(String(32))
+    gemini_confidence: Mapped[float | None] = mapped_column(Float)
+    gemini_junk_tokens: Mapped[list[str] | None] = mapped_column(JSON)
+    gemini_explanation: Mapped[str | None] = mapped_column(Text)
+    tmdb_queries: Mapped[list[str] | None] = mapped_column(JSON)
     confidence: Mapped[float | None] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -16,6 +16,8 @@
 - TMDB matching client
 - Dry-run planning model
 - Preview API and web UI
+- AI-assisted recognition pipeline
+- Recognition memory for manual corrections and token rules
 - Safe apply engine
 - Rollback engine
 - Docker packaging

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { createScanSession, getSettings, listScanSessions } from "../api";
 import { FolderPickerModal } from "../components/FolderPickerModal";
 import { t } from "../i18n";
+import { labelScanSessionStatus } from "../labels";
 import type { ScanSession } from "../types";
 
 function formatDate(value: string): string {
@@ -173,7 +174,7 @@ export function SessionsPage() {
                     <td>{s.id}</td>
                     <td>{s.source_path}</td>
                     <td>{s.target_path}</td>
-                    <td>{s.status}</td>
+                    <td>{labelScanSessionStatus(s.status)}</td>
                     <td>{formatDate(s.created_at)}</td>
                     <td>
                       <Link to={`/sessions/${s.id}`}>{t.sessions.openButton}</Link>

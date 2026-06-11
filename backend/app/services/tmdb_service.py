@@ -99,15 +99,15 @@ class TMDBService:
         await self.candidates.delete_for_media_item(item.id)
         await self.session.flush()
 
-        results = await self._search_for_item(item)
-        if not results:
+        results, score_title, score_year = await self._search_for_item(item)
+        if not results or not score_title:
             item.status = MediaItemStatus.UNMATCHED
             item.needs_review = True
             await self.session.flush()
             return item.status
 
         scored = sorted(
-            ((result, score_tmdb_candidate(item.parsed_title or "", item.year, result)) for result in results),
+            ((result, score_tmdb_candidate(score_title, score_year, result)) for result in results),
             key=lambda pair: pair[1],
             reverse=True,
         )
@@ -133,13 +133,20 @@ class TMDBService:
         await self.session.flush()
         return item.status
 
-    async def _search_for_item(self, item: MediaItem) -> list[TmdbSearchResult]:
-        query = item.parsed_title or ""
-        if item.media_type == MediaType.MOVIE:
-            return await self.client.search_movie(query=query, year=item.year)
-        if item.media_type == MediaType.TV_EPISODE:
-            return await self.client.search_tv(query=query)
-        return []
+    async def _search_for_item(self, item: MediaItem) -> tuple[list[TmdbSearchResult], str | None, int | None]:
+        media_type = _priority_media_type(item)
+        if media_type not in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
+            return [], None, None
+
+        for query in _priority_queries(item):
+            year = _priority_year(item)
+            if media_type == MediaType.MOVIE:
+                results = await self.client.search_movie(query=query, year=year)
+            else:
+                results = await self.client.search_tv(query=query, year=year)
+            if results:
+                return results, query, year
+        return [], None, None
 
     def _candidate_from_result(self, media_item_id: int, result: TmdbSearchResult, score: float) -> TmdbMatchCandidate:
         return TmdbMatchCandidate(
@@ -172,3 +179,33 @@ class TmdbCandidateNotFoundError(LookupError):
 
 class TmdbCandidateOwnershipError(ValueError):
     """Raised when a TMDB candidate belongs to another media item."""
+
+
+def _priority_queries(item: MediaItem) -> list[str]:
+    values: list[str | None] = [
+        *(item.tmdb_queries or []),
+        item.gemini_clean_title,
+        item.ai_clean_title,
+        item.parsed_title,
+        item.original_title,
+    ]
+    queries: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = (value or "").strip()
+        key = normalized.lower()
+        if normalized and key not in seen:
+            queries.append(normalized)
+            seen.add(key)
+    return queries[:5]
+
+
+def _priority_year(item: MediaItem) -> int | None:
+    return item.gemini_year or item.ai_year or item.year
+
+
+def _priority_media_type(item: MediaItem) -> MediaType:
+    for value in (item.gemini_media_type, item.ai_media_type, item.media_type):
+        if value in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
+            return MediaType(value)
+    return MediaType.UNKNOWN

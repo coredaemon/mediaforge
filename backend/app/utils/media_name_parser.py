@@ -34,13 +34,13 @@ PAREN_YEAR_PATTERN = re.compile(r"(?P<title>.+?)\s*\((?P<year>19\d{2}|20\d{2})\)
 TOKEN_YEAR_PATTERN = re.compile(r"(?P<title>.+?)[\s._-]+(?P<year>19\d{2}|20\d{2})(?:[\s._-]|$)")
 
 
-def parse_media_filename(path: str | Path) -> ParsedMediaCandidate:
+def parse_media_filename(path: str | Path, remove_tokens: set[str] | None = None) -> ParsedMediaCandidate:
     original_name = Path(path).name
     stem = Path(path).stem
 
     episode_match = SXXEXX_PATTERN.search(stem) or ONE_X_TWO_PATTERN.search(stem)
     if episode_match:
-        title = clean_title(episode_match.group("prefix"))
+        title = clean_title(episode_match.group("prefix"), remove_tokens=remove_tokens)
         return ParsedMediaCandidate(
             title=title,
             original_name=original_name,
@@ -54,7 +54,7 @@ def parse_media_filename(path: str | Path) -> ParsedMediaCandidate:
 
     movie_match = PAREN_YEAR_PATTERN.search(stem) or TOKEN_YEAR_PATTERN.search(stem)
     if movie_match:
-        title = clean_title(movie_match.group("title"))
+        title = clean_title(movie_match.group("title"), remove_tokens=remove_tokens)
         return ParsedMediaCandidate(
             title=title,
             original_name=original_name,
@@ -66,7 +66,7 @@ def parse_media_filename(path: str | Path) -> ParsedMediaCandidate:
             needs_review=not bool(title),
         )
 
-    title = clean_title(stem)
+    title = clean_title(stem, remove_tokens=remove_tokens)
     return ParsedMediaCandidate(
         title=title or None,
         original_name=original_name,
@@ -79,7 +79,8 @@ def parse_media_filename(path: str | Path) -> ParsedMediaCandidate:
     )
 
 
-def clean_title(value: str) -> str:
+def clean_title(value: str, remove_tokens: set[str] | None = None) -> str:
     normalized = value.replace("_", " ").replace(".", " ").replace("-", " ")
-    words = [word for word in normalized.split() if word.lower() not in TECHNICAL_TOKENS]
+    ignored_tokens = TECHNICAL_TOKENS | {token.lower() for token in (remove_tokens or set())}
+    words = [word for word in normalized.split() if word.lower() not in ignored_tokens]
     return " ".join(words).strip()

@@ -51,6 +51,19 @@ export interface MediaItem {
   matched_title: string | null;
   matched_year: number | null;
   match_confidence: number | null;
+  ai_clean_title: string | null;
+  ai_year: number | null;
+  ai_media_type: string | null;
+  ai_confidence: number | null;
+  ai_junk_tokens: string[] | null;
+  ai_explanation: string | null;
+  gemini_clean_title: string | null;
+  gemini_year: number | null;
+  gemini_media_type: string | null;
+  gemini_confidence: number | null;
+  gemini_junk_tokens: string[] | null;
+  gemini_explanation: string | null;
+  tmdb_queries: string[] | null;
   confidence: number | null;
   needs_review: boolean;
   created_at: string;
@@ -83,6 +96,44 @@ export interface TmdbMatchResult {
   needs_review_count: number;
   unmatched_count: number;
   skipped_count: number;
+}
+
+export interface RecognitionNormalizeResult {
+  scan_session_id: number;
+  normalized_count: number;
+  skipped_count: number;
+  error_count: number;
+}
+
+export interface RecognitionCorrectionCreate {
+  corrected_title: string;
+  corrected_year?: number | null;
+  corrected_media_type?: string | null;
+  removed_tokens?: string[];
+  confidence?: number | null;
+}
+
+export interface RecognitionCorrection {
+  id: number;
+  media_item_id: number;
+  original_title: string | null;
+  previous_title: string | null;
+  corrected_title: string;
+  corrected_year: number | null;
+  corrected_media_type: string | null;
+  removed_tokens: string[];
+  confidence: number | null;
+  created_at: string;
+}
+
+export interface RecognitionTokenRule {
+  id: number;
+  token: string;
+  action: string;
+  source: string;
+  hit_count: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface OperationPlan {

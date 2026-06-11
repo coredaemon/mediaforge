@@ -1,4 +1,5 @@
 from backend.app.schemas.tmdb import TmdbSearchResult
+from backend.app.schemas.recognition import NormalizedTitle
 
 
 class FakeTmdbClient:
@@ -29,3 +30,16 @@ class FakeTmdbClient:
     ) -> list[TmdbSearchResult]:
         self.tv_calls.append((query, year, language))
         return self.tv_results
+
+
+class FakeTitleNormalizer:
+    def __init__(self, result: NormalizedTitle | None = None, fail: bool = False) -> None:
+        self.result = result or NormalizedTitle(clean_title="In The Grey", year=2026, media_type="MOVIE", confidence=0.92)
+        self.fail = fail
+        self.calls: list[tuple[str, str | None, int | None]] = []
+
+    async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
+        self.calls.append((original_name, parser_title, parser_year))
+        if self.fail:
+            raise RuntimeError("normalizer failed")
+        return self.result

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   ApiError,
   createPlan,
+  createRecognitionCorrection,
   discoverSession,
   formatTmdbError,
   getScanSession,
@@ -12,7 +13,9 @@ import {
   listPlans,
   listTmdbCandidates,
   matchTmdbSession,
+  normalizeLocalAi,
   parseSession,
+  resolveWithGemini,
   selectTmdbCandidate,
 } from "../api";
 import {
@@ -40,7 +43,9 @@ type StepStatus = "pending" | "running" | "done" | "error";
 const analysisSteps: { key: string; label: string }[] = [
   { key: "discover", label: "Сканирование файлов" },
   { key: "parse", label: "Распознавание названий" },
+  { key: "local-ai", label: "Local AI cleanup" },
   { key: "match", label: "Поиск в TMDB" },
+  { key: "gemini", label: "Gemini fallback" },
   { key: "plan", label: "Построение безопасного плана" },
 ];
 
@@ -142,7 +147,9 @@ export function SessionDetailPage() {
   const [stepStatus, setStepStatus] = useState<Record<string, StepStatus>>({
     discover: "pending",
     parse: "pending",
+    "local-ai": "pending",
     match: "pending",
+    gemini: "pending",
     plan: "pending",
   });
 
@@ -239,7 +246,9 @@ export function SessionDetailPage() {
     const nextStatus: Record<string, StepStatus> = {
       discover: "pending",
       parse: "pending",
+      "local-ai": "pending",
       match: "pending",
+      gemini: "pending",
       plan: "pending",
     };
     setStepStatus(nextStatus);
@@ -256,7 +265,12 @@ export function SessionDetailPage() {
     try {
       await runStep("discover", () => discoverSession(numId));
       await runStep("parse", () => parseSession(numId));
+      await runStep("local-ai", () => normalizeLocalAi(numId));
       await runStep("match", () => matchTmdbSession(numId));
+      await runStep("gemini", async () => {
+        await resolveWithGemini(numId);
+        await matchTmdbSession(numId, true);
+      });
       await runStep("plan", () => createPlan(numId, true));
       setInfo("Анализ завершён. Проверьте найденные объекты и безопасный план.");
     } catch (err) {
@@ -357,8 +371,17 @@ export function SessionDetailPage() {
             <button disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "Распознавание завершено.")}>
               Распознать
             </button>
+            <button disabled={busy} onClick={() => void runAction("local-ai", () => normalizeLocalAi(numId), "Local AI normalization finished.")}>
+              Local AI
+            </button>
             <button disabled={busy} onClick={() => void runAction("match", () => matchTmdbSession(numId), "Поиск TMDB завершён.")}>
               Найти в TMDB
+            </button>
+            <button disabled={busy} onClick={() => void runAction("gemini", async () => {
+              await resolveWithGemini(numId);
+              await matchTmdbSession(numId, true);
+            }, "Gemini fallback and second TMDB pass finished.")}>
+              Gemini + TMDB
             </button>
             <button disabled={busy} onClick={() => void runAction("plan", () => createPlan(numId), "План построен.")}>
               Построить план
@@ -382,7 +405,11 @@ export function SessionDetailPage() {
           <h3>Найдено в TMDB</h3>
           <span className="muted">{matchedItems.length}</span>
         </div>
-        <ItemList items={matchedItems} onCandidates={showCandidates} />
+        <ItemList items={matchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+          await createRecognitionCorrection(item.id, payload);
+          await matchTmdbSession(numId, true);
+          await loadAll();
+        }} />
       </section>
 
       <section className="panel">
@@ -390,7 +417,11 @@ export function SessionDetailPage() {
           <h3>Требуют проверки</h3>
           <span className="muted">{reviewItems.length}</span>
         </div>
-        <ItemList items={reviewItems} onCandidates={showCandidates} />
+        <ItemList items={reviewItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+          await createRecognitionCorrection(item.id, payload);
+          await matchTmdbSession(numId, true);
+          await loadAll();
+        }} />
       </section>
 
       <section className="panel">
@@ -398,13 +429,21 @@ export function SessionDetailPage() {
           <h3>Не найдено</h3>
           <span className="muted">{unmatchedItems.length}</span>
         </div>
-        <ItemList items={unmatchedItems} onCandidates={showCandidates} />
+        <ItemList items={unmatchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+          await createRecognitionCorrection(item.id, payload);
+          await matchTmdbSession(numId, true);
+          await loadAll();
+        }} />
       </section>
 
       {otherItems.length > 0 ? (
         <section className="panel">
           <h3>Другие объекты</h3>
-          <ItemList items={otherItems} onCandidates={showCandidates} />
+          <ItemList items={otherItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+          await createRecognitionCorrection(item.id, payload);
+          await matchTmdbSession(numId, true);
+          await loadAll();
+        }} />
         </section>
       ) : null}
 
@@ -499,7 +538,26 @@ export function SessionDetailPage() {
   );
 }
 
-function ItemList({ items, onCandidates }: { items: MediaItem[]; onCandidates: (itemId: number) => Promise<void> }) {
+
+type CorrectionPayload = {
+  corrected_title: string;
+  corrected_year?: number | null;
+  corrected_media_type?: string | null;
+  removed_tokens?: string[];
+  confidence?: number | null;
+};
+
+function ItemList({
+  items,
+  busy,
+  onCandidates,
+  onCorrection,
+}: {
+  items: MediaItem[];
+  busy: boolean;
+  onCandidates: (itemId: number) => Promise<void>;
+  onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
+}) {
   if (items.length === 0) {
     return <p className="muted">Нет объектов в этом разделе.</p>;
   }
@@ -509,7 +567,7 @@ function ItemList({ items, onCandidates }: { items: MediaItem[]; onCandidates: (
         <div key={item.id} className="item-card">
           <div className="section-heading">
             <div>
-              <strong>{item.parsed_title ?? item.original_title ?? `Объект #${item.id}`}</strong>
+              <strong>{item.parsed_title ?? item.original_title ?? `Object #${item.id}`}</strong>
               <p className="muted">
                 {labelMediaType(item.media_type)}
                 {item.year ? ` · ${item.year}` : ""}
@@ -520,10 +578,12 @@ function ItemList({ items, onCandidates }: { items: MediaItem[]; onCandidates: (
           </div>
           <div className="item-meta">
             <span>TMDB: {fmt(item.matched_title ?? item.tmdb_id)}</span>
-            <span>Уверенность: {formatPercent(item.match_confidence ?? item.confidence)}</span>
+            <span>Confidence: {formatPercent(item.match_confidence ?? item.ai_confidence ?? item.confidence)}</span>
           </div>
+          <RecognitionEvidence item={item} />
+          <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} />
           <button type="button" onClick={() => void onCandidates(item.id)}>
-            Кандидаты TMDB
+            TMDB candidates
           </button>
         </div>
       ))}
@@ -531,6 +591,73 @@ function ItemList({ items, onCandidates }: { items: MediaItem[]; onCandidates: (
   );
 }
 
+function RecognitionEvidence({ item }: { item: MediaItem }) {
+  return (
+    <div className="recognition-evidence">
+      <span>Parser: {fmt(item.parsed_title)} {item.year ? `(${item.year})` : ""}</span>
+      <span>Local AI: {fmt(item.ai_clean_title)} {formatPercent(item.ai_confidence)}</span>
+      <span>Gemini: {fmt(item.gemini_clean_title)} {formatPercent(item.gemini_confidence)}</span>
+      {item.tmdb_queries?.length ? <span>TMDB queries: {item.tmdb_queries.join(", ")}</span> : null}
+      {item.ai_junk_tokens?.length ? <span>Removed tokens: {item.ai_junk_tokens.join(", ")}</span> : null}
+      {item.ai_explanation ? <span>{item.ai_explanation}</span> : null}
+      {item.gemini_explanation ? <span>{item.gemini_explanation}</span> : null}
+    </div>
+  );
+}
+
+function CorrectionForm({
+  item,
+  busy,
+  onSubmit,
+}: {
+  item: MediaItem;
+  busy: boolean;
+  onSubmit: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(item.ai_clean_title ?? item.parsed_title ?? "");
+  const [year, setYear] = useState<string>(String(item.ai_year ?? item.year ?? ""));
+  const [mediaType, setMediaType] = useState(item.ai_media_type ?? item.media_type);
+  const [tokens, setTokens] = useState((item.ai_junk_tokens ?? []).join(", "));
+
+  useEffect(() => {
+    setTitle(item.ai_clean_title ?? item.parsed_title ?? "");
+    setYear(String(item.ai_year ?? item.year ?? ""));
+    setMediaType(item.ai_media_type ?? item.media_type);
+    setTokens((item.ai_junk_tokens ?? []).join(", "));
+  }, [item]);
+
+  return (
+    <details className="correction-form">
+      <summary>Manual correction</summary>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!title.trim()) return;
+          void onSubmit(item, {
+            corrected_title: title.trim(),
+            corrected_year: year === "" ? null : Number(year),
+            corrected_media_type: mediaType,
+            removed_tokens: tokens.split(",").map((token) => token.trim()).filter(Boolean),
+            confidence: 1,
+          });
+        }}
+      >
+        <div className="correction-grid">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Clean title" />
+          <input value={year} onChange={(e) => setYear(e.target.value)} placeholder="Year" inputMode="numeric" />
+          <select value={mediaType} onChange={(e) => setMediaType(e.target.value)}>
+            <option value="MOVIE">{labelMediaType("MOVIE")}</option>
+            <option value="TV_EPISODE">{labelMediaType("TV_EPISODE")}</option>
+            <option value="TV_SHOW">{labelMediaType("TV_SHOW")}</option>
+            <option value="UNKNOWN">{labelMediaType("UNKNOWN")}</option>
+          </select>
+          <input value={tokens} onChange={(e) => setTokens(e.target.value)} placeholder="Tokens to remove" />
+        </div>
+        <button type="submit" disabled={busy || !title.trim()}>Save and retry TMDB</button>
+      </form>
+    </details>
+  );
+}
 function TechnicalTables({
   files,
   items,

@@ -20,6 +20,19 @@ class MediaItemRead(BaseModel):
     matched_title: str | None = None
     matched_year: int | None = None
     match_confidence: float | None = None
+    ai_clean_title: str | None = None
+    ai_year: int | None = None
+    ai_media_type: str | None = None
+    ai_confidence: float | None = None
+    ai_junk_tokens: list[str] | None = None
+    ai_explanation: str | None = None
+    gemini_clean_title: str | None = None
+    gemini_year: int | None = None
+    gemini_media_type: str | None = None
+    gemini_confidence: float | None = None
+    gemini_junk_tokens: list[str] | None = None
+    gemini_explanation: str | None = None
+    tmdb_queries: list[str] | None = None
     confidence: float | None = None
     needs_review: bool
     created_at: datetime

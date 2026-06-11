@@ -14,10 +14,13 @@ from ...repositories.media_item_repository import MediaItemRepository
 from ...schemas.media_file import MediaFileRead
 from ...schemas.media_item import MediaItemRead
 from ...schemas.operation_plan import OperationPlanRead
+from ...schemas.recognition import RecognitionNormalizeResult
 from ...schemas.scan_session import ScanSessionCreate, ScanSessionListItem, ScanSessionRead
 from ...schemas.tmdb import TmdbMatchResult
 from ...services.parser_service import ParserService
 from ...services.planning_service import NoMatchedItemsError, PlanningService
+from ...services.recognition_clients import TitleNormalizerClient
+from ...services.recognition_service import RecognitionService
 from ...services.scan_session_service import ScanSessionNotFoundError, ScanSessionService
 from ...services.scanner_service import ScannerService
 from ...services.tmdb_client import TmdbApiKeyMissingError, TmdbClientProtocol
@@ -27,6 +30,14 @@ router = APIRouter(prefix="/scan-sessions", tags=["scan-sessions"])
 
 
 def get_tmdb_client() -> TmdbClientProtocol | None:
+    return None
+
+
+def get_local_title_normalizer() -> TitleNormalizerClient | None:
+    return None
+
+
+def get_gemini_title_normalizer() -> TitleNormalizerClient | None:
     return None
 
 
@@ -163,6 +174,30 @@ async def list_scan_session_items(
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return await MediaItemRepository(session).list_by_scan_session(session_id)
+
+
+@router.post("/{session_id}/normalize-local-ai", response_model=RecognitionNormalizeResult)
+async def normalize_scan_session_local_ai(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),
+    local_client: TitleNormalizerClient | None = Depends(get_local_title_normalizer),
+) -> RecognitionNormalizeResult:
+    try:
+        return await RecognitionService(session, local_client=local_client).normalize_scan_session(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/resolve-with-gemini", response_model=RecognitionNormalizeResult)
+async def resolve_scan_session_with_gemini(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),
+    gemini_client: TitleNormalizerClient | None = Depends(get_gemini_title_normalizer),
+) -> RecognitionNormalizeResult:
+    try:
+        return await RecognitionService(session, gemini_client=gemini_client).resolve_with_gemini(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{session_id}/match-tmdb", response_model=TmdbMatchResult)

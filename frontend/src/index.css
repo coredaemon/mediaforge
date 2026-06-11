@@ -464,6 +464,46 @@ th {
   margin: 0.35rem 0 0.6rem;
 }
 
+.recognition-evidence {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.88rem;
+}
+
+.correction-form {
+  margin: 0.45rem 0 0.65rem;
+}
+
+.correction-form summary {
+  cursor: pointer;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.correction-form form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.correction-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(90px, 0.6fr) minmax(140px, 1fr) minmax(150px, 1fr);
+  gap: 0.5rem;
+}
+
+@media (max-width: 820px) {
+  .correction-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .plan-tabs {
   display: flex;
   flex-wrap: wrap;

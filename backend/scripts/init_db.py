@@ -16,6 +16,19 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("media_items", "matched_title", "VARCHAR(512)", ""),
     ("media_items", "matched_year", "INTEGER", ""),
     ("media_items", "match_confidence", "FLOAT", ""),
+    ("media_items", "ai_clean_title", "VARCHAR(512)", ""),
+    ("media_items", "ai_year", "INTEGER", ""),
+    ("media_items", "ai_media_type", "VARCHAR(32)", ""),
+    ("media_items", "ai_confidence", "FLOAT", ""),
+    ("media_items", "ai_junk_tokens", "JSON", ""),
+    ("media_items", "ai_explanation", "TEXT", ""),
+    ("media_items", "gemini_clean_title", "VARCHAR(512)", ""),
+    ("media_items", "gemini_year", "INTEGER", ""),
+    ("media_items", "gemini_media_type", "VARCHAR(32)", ""),
+    ("media_items", "gemini_confidence", "FLOAT", ""),
+    ("media_items", "gemini_junk_tokens", "JSON", ""),
+    ("media_items", "gemini_explanation", "TEXT", ""),
+    ("media_items", "tmdb_queries", "JSON", ""),
 ]
 
 

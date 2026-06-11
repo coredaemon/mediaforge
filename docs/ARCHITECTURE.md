@@ -10,6 +10,8 @@ MediaForge is a local-first web application with a Python/FastAPI backend, SQLit
 - **SQLite database** stores local application state, materialized operation plans, and app settings.
 - **Scanner** discovers candidate media files without modifying the filesystem.
 - **Parser** turns filenames and folder context into structured candidates.
+- **Recognition Memory** stores manual corrections and reusable token rules for future scans.
+- **AI Normalization** can use a local model first and Gemini fallback later to clean noisy release names before TMDB search.
 - **TMDB Client** resolves confirmed matches against the canonical metadata source.
 - **Planner** builds dry-run operation plans for preview.
 - **Settings** stores local configuration including API keys — never committed to git.
@@ -34,6 +36,8 @@ The pipeline is intentionally staged: discovery and planning can be inspected be
 - `MediaFile` stores discovered file paths, names, extensions, sizes, classification, and scan errors.
 - `MediaItem` stores parsed movie, TV episode, or unknown local candidates.
 - `TmdbMatchCandidate` stores TMDB search results scored against a parsed candidate.
+- `RecognitionCorrection` stores user-approved title/year/media-type corrections.
+- `RecognitionTokenRule` stores reusable cleanup rules such as release groups or junk tokens to remove.
 - `OperationPlan` stores a materialized dry-run plan for a scan session.
 - `PlanOperation` stores one planned action: `CREATE_DIR`, `MOVE_FILE`, `WRITE_TEXT_FILE`, or `DOWNLOAD_FILE`.
 - `AppSettings` stores local configuration: API keys, AI provider settings, default paths, setup state.
@@ -61,9 +65,30 @@ The pipeline is intentionally staged: discovery and planning can be inspected be
 
 1. Load parsed `MediaItem` rows for a scan session.
 2. Resolve TMDB API key: check `AppSettings.tmdb_api_key` first, then `TMDB_API_KEY` env var.
-3. Search TMDB and score candidates.
-4. Auto-select best candidate when `score >= 0.80`.
-5. Mark uncertain candidates as `NEEDS_REVIEW`, items with no results as `UNMATCHED`.
+3. Build a priority query list: manual/AI `tmdb_queries`, Gemini title, local AI title, parser title, original filename.
+4. Search TMDB and score candidates against the query that returned results.
+5. Auto-select best candidate when `score >= 0.80`.
+6. Mark uncertain candidates as `NEEDS_REVIEW`, items with no results as `UNMATCHED`.
+
+## AI-Assisted Recognition Flow
+
+The current recognition pipeline is:
+
+```text
+Discovery -> Deterministic parser -> Local LLM normalization -> TMDB search pass #1
+          -> Gemini fallback -> TMDB search pass #2 -> Human review -> Recognition Memory
+```
+
+Implemented endpoints:
+- `POST /scan-sessions/{id}/normalize-local-ai`
+- `POST /scan-sessions/{id}/resolve-with-gemini`
+- `POST /items/{item_id}/corrections`
+- `GET /recognition-memory/corrections`
+- `GET /recognition-memory/token-rules`
+
+Local AI normalization reads `AppSettings.ai_provider`, `ai_base_url`, `ai_model`, and `ai_api_key` when needed. Supported normalization clients are Ollama, LM Studio/OpenAI-compatible endpoints, custom OpenAI-compatible endpoints, and Gemini fallback. API keys are passed only to outgoing requests and are never returned by read endpoints.
+
+Manual corrections update the media item, save a correction row, and upsert remove-token rules. Token rules are applied on later normalization passes so names like release groups, streaming tags, and team names can be removed consistently.
 
 ## Dry-run Planning Layer
 

@@ -8,6 +8,10 @@ import type {
   MediaItem,
   OperationPlan,
   PlanOperation,
+  RecognitionCorrection,
+  RecognitionCorrectionCreate,
+  RecognitionNormalizeResult,
+  RecognitionTokenRule,
   ScanSession,
   ScanSessionCreate,
   TestConnectionResult,
@@ -113,6 +117,14 @@ export function matchTmdbSession(sessionId: number, force = false): Promise<Tmdb
   return request<TmdbMatchResult>(`/scan-sessions/${sessionId}/match-tmdb${query}`, { method: "POST" });
 }
 
+export function normalizeLocalAi(sessionId: number): Promise<RecognitionNormalizeResult> {
+  return request<RecognitionNormalizeResult>(`/scan-sessions/${sessionId}/normalize-local-ai`, { method: "POST" });
+}
+
+export function resolveWithGemini(sessionId: number): Promise<RecognitionNormalizeResult> {
+  return request<RecognitionNormalizeResult>(`/scan-sessions/${sessionId}/resolve-with-gemini`, { method: "POST" });
+}
+
 export function createPlan(sessionId: number, force = false): Promise<OperationPlan> {
   const query = force ? "?force=true" : "";
   return request<OperationPlan>(`/scan-sessions/${sessionId}/plan${query}`, { method: "POST" });
@@ -142,6 +154,24 @@ export function selectTmdbCandidate(itemId: number, candidateId: number): Promis
   return request<TmdbMatchCandidate>(`/items/${itemId}/tmdb-candidates/${candidateId}/select`, {
     method: "POST",
   });
+}
+
+export function createRecognitionCorrection(
+  itemId: number,
+  payload: RecognitionCorrectionCreate,
+): Promise<RecognitionCorrection> {
+  return request<RecognitionCorrection>(`/items/${itemId}/corrections`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listRecognitionCorrections(): Promise<RecognitionCorrection[]> {
+  return request<RecognitionCorrection[]>("/recognition-memory/corrections");
+}
+
+export function listRecognitionTokenRules(): Promise<RecognitionTokenRule[]> {
+  return request<RecognitionTokenRule[]>("/recognition-memory/token-rules");
 }
 
 export function formatTmdbError(message: string): string {
