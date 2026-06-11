@@ -110,6 +110,34 @@ AI response normalization (`backend/app/utils/ai_response_normalization.py`) coe
 
 If coercion was required, the item still gets `success` status and a short warning is stored for the UI; only unparseable JSON or responses without a usable title are marked `failed`.
 
+## Processed Media Memory
+
+`ProcessedMediaRecord` is session-independent SQLite memory keyed by `file_identity_key = file_name|size|modified_at`.
+
+Reuse flow:
+1. `ScannerService` stores `size_bytes` and `modified_at` on each `MediaFile`.
+2. `ParserService` looks up an existing record before creating a new `MediaItem`.
+3. If the file identity matches, the item is marked `reused_from_memory=true` and previous recognition/TMDB metadata is restored.
+4. `RecognitionService` and `TMDBService` skip reused items unless `force=true`.
+5. After a successful TMDB match or manual candidate selection, `ProcessedMediaService.record_from_item()` upserts the record.
+
+Changed files (different size or mtime) are treated as new items (`memory_status=new`).
+
+## TMDB Localization and External IDs
+
+Search uses `language=ru-RU` with fallback to `en-US` when no Russian results are returned. Details requests use:
+
+```text
+/movie/{id}?language=ru-RU&append_to_response=external_ids,images,translations
+/tv/{id}?language=ru-RU&append_to_response=external_ids,images,translations
+```
+
+Images prefer `include_image_language=ru,null,en`. External IDs (`imdb_id`, `tvdb_id`, `wikidata_id`) are stored on `MediaItem`, `TmdbMatchCandidate`, and `ProcessedMediaRecord` for future Jellyfin/Plex/Kodi NFO export.
+
+## Visual TMDB Review
+
+`GET /items/{id}/tmdb-candidates` returns enriched candidate cards (poster/backdrop URLs, localized overview, external IDs, metadata language). If a reused memory item has no DB candidates, the API synthesizes a single selected card from stored item metadata. The session UI renders visual candidate cards and matched-item cards with posters and IDs.
+
 ## Dry-run Planning Layer
 
 Planning is separated from apply. The planner reads `MATCHED` items and builds a `OperationPlan` with `PlanOperation` rows stored in SQLite. No filesystem changes happen.
@@ -132,9 +160,9 @@ Apply and rollback are not implemented yet.
 - `media_files`
 - `media_items` and `tmdb_match_candidates`
 - `operation_plans` and `plan_operations`
-- `recognition_corrections` linked to session items
+- session-linked `media_items` and their `tmdb_match_candidates`
 
-Global `recognition_token_rules` are preserved. Files on disk are never modified or deleted.
+`recognition_corrections` are detached (`media_item_id = null`), not deleted. Global `recognition_token_rules` and `processed_media_records` are preserved. Files on disk are never modified or deleted.
 
 ## App Settings
 

@@ -11,6 +11,7 @@ from .enums import (
 from .media_file import MediaFile
 from .media_item import MediaItem
 from .operation_plan import OperationPlan
+from .processed_media_record import ProcessedMediaRecord
 from .plan_operation import PlanOperation
 from .recognition_memory import RecognitionCorrection, RecognitionTokenRule
 from .scan_session import ScanSession
@@ -28,6 +29,7 @@ __all__ = [
     "OperationType",
     "PlanOperation",
     "PlanStatus",
+    "ProcessedMediaRecord",
     "RecognitionCorrection",
     "RecognitionTokenRule",
     "ScanSession",

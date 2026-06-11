@@ -9,6 +9,7 @@ from ..repositories.media_file_repository import MediaFileRepository
 from ..repositories.media_item_repository import MediaItemRepository
 from ..repositories.scan_session_repository import ScanSessionRepository
 from ..utils.media_name_parser import parse_media_filename
+from .processed_media_service import ProcessedMediaService
 from .scan_session_service import ScanSessionNotFoundError
 
 
@@ -18,6 +19,7 @@ class ParserService:
         self.scan_sessions = ScanSessionRepository(session)
         self.media_files = MediaFileRepository(session)
         self.media_items = MediaItemRepository(session)
+        self.processed_media = ProcessedMediaService(session)
 
     async def parse_scan_session(self, session_id: int) -> ScanSession:
         scan_session = await self.scan_sessions.get(session_id)
@@ -31,6 +33,21 @@ class ParserService:
         video_files = await self.media_files.list_by_kind(session_id, MediaFileKind.VIDEO)
         for media_file in video_files:
             if media_file.media_item_id is not None:
+                continue
+
+            memory_record = await self.processed_media.find_reusable_record(media_file)
+            if memory_record is not None:
+                media_item = await self.media_items.create(
+                    MediaItem(
+                        scan_session_id=session_id,
+                        media_type=MediaType.UNKNOWN,
+                        status=MediaItemStatus.DISCOVERED,
+                        original_title=media_file.file_name,
+                        needs_review=False,
+                    )
+                )
+                self.processed_media.apply_record_to_item(memory_record, media_item, media_file)
+                await self.media_files.link_to_media_item(media_file, media_item.id)
                 continue
 
             candidate = parse_media_filename(media_file.file_name)
@@ -47,6 +64,7 @@ class ParserService:
                     episode_number=candidate.episode_number,
                     confidence=candidate.confidence,
                     needs_review=candidate.needs_review or status == MediaItemStatus.NEEDS_REVIEW,
+                    memory_status="new",
                 )
             )
             await self.media_files.link_to_media_item(media_file, media_item.id)

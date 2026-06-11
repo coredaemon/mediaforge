@@ -43,7 +43,7 @@ class ScanSessionService:
 
         items = await self.media_items.list_by_scan_session(scan_session_id)
         item_ids = [item.id for item in items]
-        await self.memory.delete_corrections_for_media_items(item_ids)
+        await self.memory.detach_corrections_for_media_items(item_ids)
         await self.media_files.delete_for_scan_session(scan_session_id)
         await self.scan_sessions.delete(scan_session)
         await self.session.commit()

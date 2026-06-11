@@ -13,7 +13,7 @@ class RecognitionCorrectionCreate(BaseModel):
 
 class RecognitionCorrectionRead(BaseModel):
     id: int
-    media_item_id: int
+    media_item_id: int | None = None
     original_title: str | None = None
     previous_title: str | None = None
     corrected_title: str

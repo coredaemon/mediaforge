@@ -145,7 +145,19 @@ Per-item diagnostics are saved for local AI and Gemini normalization: status, du
 
 The target folder selected when creating a scan session is the actual destination root. MediaForge does not add a `Movies` subfolder automatically for movies; planned paths look like `{target}/{Title} ({Year})/{Title} ({Year}){ext}`.
 
-Scan sessions can be deleted from the sessions list or session detail page. Deletion removes only analysis records from SQLite (files, items, TMDB candidates, plans, operations, corrections). Media files on disk are never deleted.
+Scan sessions can be deleted from the sessions list or session detail page. Deletion removes only analysis records from SQLite (files, items, TMDB candidates, plans, operations). User correction history is detached, not deleted. Global processed media memory and recognition token rules are preserved. Media files on disk are never deleted.
+
+## Память обработанных медиа
+
+MediaForge stores a global `ProcessedMediaRecord` for each recognized video file. File identity uses `file_name + size + modified_at` (Windows-safe, case-insensitive). When a later scan session finds the same unchanged file, MediaForge restores the previous title/year/TMDB match/external IDs and skips local AI, Gemini, and TMDB unless `force=true`. The session dashboard shows how many files were reused from memory.
+
+## Русская локализация TMDB
+
+TMDB search and details use `language=ru-RU` by default (`include_adult=false`, `region=RU` for movies). If Russian title/overview is missing, MediaForge falls back to `en-US`. Poster/backdrop selection prefers `ru`, then neutral/null, then `en`.
+
+## External IDs for Jellyfin/Plex/Kodi
+
+After TMDB match or manual candidate selection, MediaForge stores TMDB ID plus external IDs (`imdb_id`, `tvdb_id`, `wikidata_id`), localized title/overview, poster/backdrop URLs, and metadata language on the media item, TMDB candidates, and processed media record. These fields will be used later for NFO generation.
 
 Cloud AI settings use the same flow as local providers: paste API key, fetch models from the provider, select a model from the dropdown, then test the selected model. Gemini model discovery calls the Gemini models API and filters models that support `generateContent`. OpenAI/ChatGPT-compatible discovery calls `/v1/models` on the configured provider endpoint. Empty key fields and placeholders such as `MediaOrganizer_API_Key`, `YOUR_API_KEY`, and `PASTE_API_KEY_HERE` are ignored and are never sent as real API keys.
 

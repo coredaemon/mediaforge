@@ -10,7 +10,7 @@ class RecognitionCorrection(Base):
     __tablename__ = "recognition_corrections"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    media_item_id: Mapped[int] = mapped_column(ForeignKey("media_items.id"), index=True)
+    media_item_id: Mapped[int | None] = mapped_column(ForeignKey("media_items.id"), index=True)
     original_title: Mapped[str | None] = mapped_column(String(512))
     previous_title: Mapped[str | None] = mapped_column(String(512))
     corrected_title: Mapped[str] = mapped_column(String(512))

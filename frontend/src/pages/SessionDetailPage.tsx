@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
@@ -21,6 +21,7 @@ import {
   selectTmdbCandidate,
 } from "../api";
 import { t } from "../i18n";
+import { candidateBackdropUrl, candidatePosterUrl, tmdbImageUrl } from "../utils/tmdb";
 import {
   labelMediaItemStatus,
   labelMediaType,
@@ -209,6 +210,7 @@ export function SessionDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [preflightResult, setPreflightResult] = useState<RecognitionPreflightResult | null>(null);
+  const candidatesPanelRef = useRef<HTMLElement | null>(null);
 
   const latestPlanId = plans[0]?.id ?? null;
 
@@ -257,6 +259,8 @@ export function SessionDetailPage() {
     const subtitles = files.filter((f) => f.is_subtitle).length;
     const matched = items.filter((item) => item.status === "MATCHED").length;
     const review = items.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN").length;
+    const reused = items.filter((item) => item.reused_from_memory).length;
+    const fresh = items.filter((item) => !item.reused_from_memory).length;
     return {
       totalFiles: files.length,
       video,
@@ -264,6 +268,8 @@ export function SessionDetailPage() {
       items: items.length,
       matched,
       review,
+      reused,
+      fresh,
       operations: operations.length,
     };
   }, [files, items, operations]);
@@ -347,7 +353,17 @@ export function SessionDetailPage() {
 
   async function showCandidates(itemId: number) {
     setSelectedItemId(itemId);
-    setCandidates(await listTmdbCandidates(itemId));
+    setError(null);
+    try {
+      setCandidates(await listTmdbCandidates(itemId));
+      requestAnimationFrame(() => {
+        candidatesPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : "Не удалось загрузить кандидатов TMDB";
+      setError(msg);
+      setCandidates([]);
+    }
   }
 
   async function selectCandidate(candidateId: number) {
@@ -487,6 +503,8 @@ export function SessionDetailPage() {
         <SummaryCard label="Видео" value={summary.video} />
         <SummaryCard label="Субтитры" value={summary.subtitles} />
         <SummaryCard label="Распознано объектов" value={summary.items} />
+        <SummaryCard label="Новых файлов" value={summary.fresh} />
+        <SummaryCard label="Уже обработано ранее" value={summary.reused} />
         <SummaryCard label="Найдено в TMDB" value={summary.matched} />
         <SummaryCard label="Требуют проверки" value={summary.review} />
         <SummaryCard label="Операций в плане" value={summary.operations} />
@@ -497,7 +515,7 @@ export function SessionDetailPage() {
           <h3>Найдено в TMDB</h3>
           <span className="muted">{matchedItems.length}</span>
         </div>
-        <ItemList items={matchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+        <ItemList variant="matched" items={matchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -509,7 +527,7 @@ export function SessionDetailPage() {
           <h3>Требуют проверки</h3>
           <span className="muted">{reviewItems.length}</span>
         </div>
-        <ItemList items={reviewItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+        <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -521,7 +539,7 @@ export function SessionDetailPage() {
           <h3>Не найдено</h3>
           <span className="muted">{unmatchedItems.length}</span>
         </div>
-        <ItemList items={unmatchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+        <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -531,7 +549,7 @@ export function SessionDetailPage() {
       {otherItems.length > 0 ? (
         <section className="panel">
           <h3>Другие объекты</h3>
-          <ItemList items={otherItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+          <ItemList variant="review" items={otherItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -540,39 +558,20 @@ export function SessionDetailPage() {
       ) : null}
 
       {selectedItemId !== null ? (
-        <section className="panel">
+        <section className="panel candidate-panel" ref={candidatesPanelRef}>
           <div className="section-heading">
             <h3>Кандидаты TMDB для объекта #{selectedItemId}</h3>
             <button type="button" onClick={() => setSelectedItemId(null)}>Закрыть</button>
           </div>
-          {candidates.length === 0 ? <p className="muted">Кандидатов пока нет.</p> : null}
+          {candidates.length === 0 ? <p className="muted">Кандидатов пока нет. Сначала запустите поиск в TMDB.</p> : null}
           <div className="candidate-list">
             {candidates.map((candidate) => (
-              <div key={candidate.id} className={`candidate-card ${candidate.is_selected ? "selected" : ""}`}>
-                <div className="section-heading">
-                  <div>
-                    <strong>{candidate.title}</strong>
-                    <p className="muted">
-                      {fmt(candidate.original_title)} · {labelMediaType(candidate.media_type)} · {fmt(candidate.year)}
-                    </p>
-                  </div>
-                  {candidate.is_selected ? <Badge value="MATCHED" label="Выбран" /> : null}
-                </div>
-                <p>{candidate.overview ?? "Описание отсутствует."}</p>
-                <div className="candidate-meta">
-                  <span>Score: {candidate.score.toFixed(2)}</span>
-                  <span>Рейтинг: {fmt(candidate.vote_average)}</span>
-                  <span>Популярность: {fmt(candidate.popularity)}</span>
-                </div>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={busy || candidate.is_selected}
-                  onClick={() => void selectCandidate(candidate.id)}
-                >
-                  {candidate.is_selected ? "Этот вариант выбран" : "Выбрать этот вариант"}
-                </button>
-              </div>
+              <CandidateReviewCard
+                key={candidate.id}
+                candidate={candidate}
+                busy={busy}
+                onSelect={() => void selectCandidate(candidate.id)}
+              />
             ))}
           </div>
         </section>
@@ -641,11 +640,13 @@ type CorrectionPayload = {
 
 function ItemList({
   items,
+  variant,
   busy,
   onCandidates,
   onCorrection,
 }: {
   items: MediaItem[];
+  variant: "matched" | "review";
   busy: boolean;
   onCandidates: (itemId: number) => Promise<void>;
   onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
@@ -656,29 +657,129 @@ function ItemList({
   return (
     <div className="item-list">
       {items.map((item) => (
-        <div key={item.id} className="item-card">
+        <MediaItemCard
+          key={item.id}
+          item={item}
+          variant={variant}
+          busy={busy}
+          onCandidates={onCandidates}
+          onCorrection={onCorrection}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MediaItemCard({
+  item,
+  variant,
+  busy,
+  onCandidates,
+  onCorrection,
+}: {
+  item: MediaItem;
+  variant: "matched" | "review";
+  busy: boolean;
+  onCandidates: (itemId: number) => Promise<void>;
+  onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
+}) {
+  const poster = item.poster_url ?? tmdbImageUrl(item.poster_path);
+  const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `Object #${item.id}`;
+  return (
+    <div className={`item-card visual-item-card ${item.reused_from_memory ? "memory-reused" : ""}`}>
+      <div className="visual-item-layout">
+        <div className="visual-item-poster">
+          {poster ? <img src={poster} alt={title} loading="lazy" /> : <div className="poster-placeholder">Нет постера</div>}
+        </div>
+        <div className="visual-item-content">
           <div className="section-heading">
             <div>
-              <strong>{item.parsed_title ?? item.original_title ?? `Object #${item.id}`}</strong>
+              <strong>{title}</strong>
               <p className="muted">
                 {labelMediaType(item.media_type)}
                 {item.year ? ` · ${item.year}` : ""}
-                {item.season_number && item.episode_number ? ` · S${String(item.season_number).padStart(2, "0")}E${String(item.episode_number).padStart(2, "0")}` : ""}
+                {item.season_number && item.episode_number
+                  ? ` · S${String(item.season_number).padStart(2, "0")}E${String(item.episode_number).padStart(2, "0")}`
+                  : ""}
               </p>
             </div>
-            <Badge value={item.status} label={labelMediaItemStatus(item.status)} />
+            <div className="item-badges">
+              {variant === "matched" ? <Badge value="MATCHED" label="Найдено в TMDB" /> : null}
+              {item.reused_from_memory ? <Badge value="MEMORY" label="Уже обработано ранее" /> : null}
+              <Badge value={item.status} label={labelMediaItemStatus(item.status)} />
+            </div>
           </div>
+          {variant === "review" ? <p className="muted">Файл: {item.original_title}</p> : null}
           <div className="item-meta">
-            <span>TMDB: {fmt(item.matched_title ?? item.tmdb_id)}</span>
+            <span>TMDB ID: {fmt(item.tmdb_id)}</span>
+            <span>IMDb: {fmt(item.imdb_id)}</span>
+            {item.tvdb_id ? <span>TVDB: {fmt(item.tvdb_id)}</span> : null}
             <span>Confidence: {formatPercent(item.match_confidence ?? item.ai_confidence ?? item.confidence)}</span>
           </div>
-          <RecognitionEvidence item={item} />
-          <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} />
-          <button type="button" onClick={() => void onCandidates(item.id)}>
-            TMDB candidates
-          </button>
+          {item.localized_overview ? <p className="item-overview">{item.localized_overview}</p> : null}
+          {variant === "review" ? <RecognitionEvidence item={item} /> : null}
+          {variant === "review" ? <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} /> : null}
+          <div className="item-actions">
+            <button type="button" onClick={() => void onCandidates(item.id)}>
+              Кандидаты TMDB
+            </button>
+          </div>
         </div>
-      ))}
+      </div>
+    </div>
+  );
+}
+
+function CandidateReviewCard({
+  candidate,
+  busy,
+  onSelect,
+}: {
+  candidate: TmdbMatchCandidate;
+  busy: boolean;
+  onSelect: () => void;
+}) {
+  const poster = candidatePosterUrl(candidate);
+  const backdrop = candidateBackdropUrl(candidate);
+  return (
+    <div className={`candidate-card visual-candidate-card ${candidate.is_selected ? "selected" : ""}`}>
+      <div className="candidate-visuals">
+        {poster ? <img className="candidate-poster" src={poster} alt={candidate.title} loading="lazy" /> : <div className="poster-placeholder">Нет постера</div>}
+        {backdrop ? <img className="candidate-backdrop" src={backdrop} alt="" loading="lazy" /> : null}
+      </div>
+      <div className="candidate-content">
+        <div className="section-heading">
+          <div>
+            <strong>{candidate.title}</strong>
+            <p className="muted">
+              {fmt(candidate.original_title)} · {labelMediaType(candidate.media_type)} · {fmt(candidate.year)}
+            </p>
+          </div>
+          {candidate.is_selected ? <Badge value="MATCHED" label="Выбран" /> : null}
+        </div>
+        {candidate.overview_is_fallback ? (
+          <p className="message warning">Описание на русском не найдено, показан английский вариант.</p>
+        ) : null}
+        <p>{candidate.overview ?? "Описание отсутствует."}</p>
+        <div className="candidate-meta">
+          <span>TMDB ID: {candidate.tmdb_id}</span>
+          <span>IMDb: {fmt(candidate.imdb_id)}</span>
+          {candidate.tvdb_id ? <span>TVDB: {candidate.tvdb_id}</span> : null}
+          {candidate.wikidata_id ? <span>Wikidata: {candidate.wikidata_id}</span> : null}
+          <span>Язык: {fmt(candidate.metadata_language)}</span>
+          <span>Score: {candidate.score.toFixed(2)}</span>
+          <span>Рейтинг: {fmt(candidate.vote_average)}</span>
+          <span>Популярность: {fmt(candidate.popularity)}</span>
+        </div>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || candidate.is_selected || candidate.id < 0}
+          onClick={onSelect}
+        >
+          {candidate.is_selected ? "Этот вариант выбран" : "Выбрать этот вариант"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -87,9 +87,12 @@ class ScannerService:
     def _build_media_file(self, scan_session_id: int, path: Path, scan_error: str | None) -> MediaFile:
         kind = classify_media_file_kind(path)
         size_bytes: int | None = None
+        modified_at: datetime | None = None
         if scan_error is None:
             try:
-                size_bytes = path.stat().st_size
+                stat = path.stat()
+                size_bytes = stat.st_size
+                modified_at = datetime.fromtimestamp(stat.st_mtime, UTC)
             except OSError as exc:
                 logger.warning("Could not read file metadata for {}: {}", path, exc)
                 scan_error = str(exc)
@@ -100,6 +103,7 @@ class ScannerService:
             file_name=path.name,
             extension=path.suffix.lower(),
             size_bytes=size_bytes,
+            modified_at=modified_at,
             kind=kind,
             is_video=kind == MediaFileKind.VIDEO,
             is_subtitle=kind == MediaFileKind.SUBTITLE,

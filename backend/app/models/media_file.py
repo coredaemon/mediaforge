@@ -22,6 +22,8 @@ class MediaFile(Base):
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
     extension: Mapped[str] = mapped_column(String(32), nullable=False)
     size_bytes: Mapped[int | None] = mapped_column(Integer)
+    modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reused_from_memory: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     kind: Mapped[MediaFileKind] = mapped_column(Enum(MediaFileKind), nullable=False)
     is_video: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_subtitle: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

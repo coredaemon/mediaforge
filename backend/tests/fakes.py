@@ -1,4 +1,4 @@
-from backend.app.schemas.tmdb import TmdbSearchResult
+from backend.app.schemas.tmdb import TmdbDetailsResult, TmdbExternalIds, TmdbSearchResult
 from backend.app.schemas.recognition import LlmPreflightCheck, NormalizedTitle
 from backend.app.services.recognition_clients import NormalizeParseResult
 
@@ -8,11 +8,17 @@ class FakeTmdbClient:
         self,
         movie_results: list[TmdbSearchResult] | None = None,
         tv_results: list[TmdbSearchResult] | None = None,
+        movie_details: dict[int, TmdbDetailsResult] | None = None,
+        tv_details: dict[int, TmdbDetailsResult] | None = None,
     ) -> None:
         self.movie_results = movie_results or []
         self.tv_results = tv_results or []
+        self.movie_details = movie_details or {}
+        self.tv_details = tv_details or {}
         self.movie_calls: list[tuple[str, int | None, str]] = []
         self.tv_calls: list[tuple[str, int | None, str]] = []
+        self.movie_detail_calls: list[tuple[int, str]] = []
+        self.tv_detail_calls: list[tuple[int, str]] = []
 
     async def search_movie(
         self,
@@ -31,6 +37,54 @@ class FakeTmdbClient:
     ) -> list[TmdbSearchResult]:
         self.tv_calls.append((query, year, language))
         return self.tv_results
+
+    async def get_movie_details(self, tmdb_id: int, language: str = "ru-RU") -> TmdbDetailsResult:
+        self.movie_detail_calls.append((tmdb_id, language))
+        if tmdb_id in self.movie_details:
+            return self.movie_details[tmdb_id]
+        for result in self.movie_results:
+            if result.tmdb_id == tmdb_id:
+                return TmdbDetailsResult(
+                    tmdb_id=result.tmdb_id,
+                    media_type="movie",
+                    title=result.title,
+                    original_title=result.original_title,
+                    overview=result.overview,
+                    year=result.year,
+                    poster_path=result.poster_path,
+                    backdrop_path=result.backdrop_path,
+                    external_ids=TmdbExternalIds(imdb_id="tt0133093", wikidata_id="Q83495"),
+                    metadata_language=language,
+                )
+        return TmdbDetailsResult(
+            tmdb_id=tmdb_id,
+            media_type="movie",
+            title="Фильм",
+            original_title="Movie",
+            overview="Русское описание",
+            year=2026,
+            poster_path="/poster.jpg",
+            backdrop_path="/backdrop.jpg",
+            external_ids=TmdbExternalIds(imdb_id="tt123", wikidata_id="Q1"),
+            metadata_language=language,
+        )
+
+    async def get_tv_details(self, tmdb_id: int, language: str = "ru-RU") -> TmdbDetailsResult:
+        self.tv_detail_calls.append((tmdb_id, language))
+        if tmdb_id in self.tv_details:
+            return self.tv_details[tmdb_id]
+        return TmdbDetailsResult(
+            tmdb_id=tmdb_id,
+            media_type="tv",
+            title="Сериал",
+            original_title="Show",
+            overview="Русское описание сериала",
+            year=2020,
+            poster_path="/poster.jpg",
+            backdrop_path="/backdrop.jpg",
+            external_ids=TmdbExternalIds(imdb_id="tt999", tvdb_id=42, wikidata_id="Q2"),
+            metadata_language=language,
+        )
 
 
 class FakeTitleNormalizer:

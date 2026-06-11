@@ -96,7 +96,7 @@ async def test_delete_session_cascades_related_rows(db_session: AsyncSession, tm
     assert await db_session.scalar(select(func.count()).select_from(TmdbMatchCandidate)) == 0
     assert await db_session.scalar(select(func.count()).select_from(OperationPlan)) == 0
     assert await db_session.scalar(select(func.count()).select_from(PlanOperation)) == 0
-    assert await db_session.scalar(select(func.count()).select_from(RecognitionCorrection)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(RecognitionCorrection)) == 1
 
     app.dependency_overrides.pop(get_tmdb_client, None)
 

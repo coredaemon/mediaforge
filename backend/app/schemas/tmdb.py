@@ -17,6 +17,13 @@ class TmdbMatchCandidateRead(BaseModel):
     year: int | None = None
     poster_path: str | None = None
     backdrop_path: str | None = None
+    poster_url: str | None = None
+    backdrop_url: str | None = None
+    imdb_id: str | None = None
+    tvdb_id: int | None = None
+    wikidata_id: str | None = None
+    metadata_language: str | None = None
+    overview_is_fallback: bool = False
     vote_average: float | None = None
     popularity: float | None = None
     score: float
@@ -48,3 +55,23 @@ class TmdbSearchResult(BaseModel):
     vote_average: float | None = None
     popularity: float | None = None
     raw_json: dict[str, Any] | None = None
+
+
+class TmdbExternalIds(BaseModel):
+    imdb_id: str | None = None
+    tvdb_id: int | None = None
+    wikidata_id: str | None = None
+
+
+class TmdbDetailsResult(BaseModel):
+    tmdb_id: int
+    media_type: str
+    title: str
+    original_title: str | None = None
+    overview: str | None = None
+    year: int | None = None
+    poster_path: str | None = None
+    backdrop_path: str | None = None
+    external_ids: TmdbExternalIds = TmdbExternalIds()
+    metadata_language: str = "ru-RU"
+    overview_is_fallback: bool = False

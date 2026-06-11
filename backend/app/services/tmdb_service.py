@@ -5,12 +5,24 @@ from ..models.enums import MediaItemStatus, MediaType
 from ..models.media_item import MediaItem
 from ..models.tmdb_match_candidate import TmdbMatchCandidate
 from ..repositories.app_settings_repository import AppSettingsRepository
+from ..repositories.media_file_repository import MediaFileRepository
 from ..repositories.media_item_repository import MediaItemRepository
 from ..repositories.scan_session_repository import ScanSessionRepository
 from ..repositories.tmdb_match_candidate_repository import TmdbMatchCandidateRepository
 from ..schemas.tmdb import TmdbMatchResult, TmdbSearchResult
+from ..utils.tmdb_images import tmdb_image_url
+from .processed_media_service import ProcessedMediaService
 from .scan_session_service import ScanSessionNotFoundError
-from .tmdb_client import TmdbApiKeyMissingError, TmdbClient, TmdbClientProtocol
+from .tmdb_client import (
+    EN_LANGUAGE,
+    RU_LANGUAGE,
+    TmdbApiKeyMissingError,
+    TmdbClient,
+    TmdbClientProtocol,
+    apply_details_to_candidate,
+    apply_details_to_item,
+    fetch_localized_details,
+)
 from .tmdb_scoring import score_tmdb_candidate
 
 AUTO_SELECT_THRESHOLD = 0.80
@@ -21,7 +33,9 @@ class TMDBService:
         self.session = session
         self.scan_sessions = ScanSessionRepository(session)
         self.media_items = MediaItemRepository(session)
+        self.media_files = MediaFileRepository(session)
         self.candidates = TmdbMatchCandidateRepository(session)
+        self.processed_media = ProcessedMediaService(session)
         self.client = client or TmdbClient(get_settings().tmdb_api_key)
 
     async def match_scan_session(self, session_id: int, force: bool = False) -> TmdbMatchResult:
@@ -42,6 +56,9 @@ class TMDBService:
         skipped_count = 0
 
         for item in await self.media_items.list_matchable_by_scan_session(session_id):
+            if item.reused_from_memory and item.tmdb_id and not force:
+                skipped_count += 1
+                continue
             if item.status == MediaItemStatus.MATCHED and not force:
                 skipped_count += 1
                 continue
@@ -53,6 +70,10 @@ class TMDBService:
                 unmatched_count += 1
             elif outcome == MediaItemStatus.NEEDS_REVIEW:
                 needs_review_count += 1
+
+            video_file = await self.media_files.get_video_for_media_item(item.id)
+            if outcome == MediaItemStatus.MATCHED:
+                await self.processed_media.record_from_item(item, video_file, session_id=session_id)
 
         await self.session.commit()
         return TmdbMatchResult(
@@ -78,6 +99,22 @@ class TMDBService:
 
         await self.candidates.clear_selected_for_media_item(item.id)
         candidate.is_selected = True
+        await self._enrich_candidate(candidate)
+        try:
+            details = await fetch_localized_details(
+                self.client,
+                tmdb_id=candidate.tmdb_id,
+                media_type=candidate.media_type,
+            )
+            apply_details_to_candidate(candidate, details)
+            apply_details_to_item(item, details)
+        except Exception:
+            item.poster_url = candidate.poster_url or tmdb_image_url(candidate.poster_path)
+            item.backdrop_url = candidate.backdrop_url or tmdb_image_url(candidate.backdrop_path, "w780")
+            item.imdb_id = candidate.imdb_id
+            item.tvdb_id = candidate.tvdb_id
+            item.wikidata_id = candidate.wikidata_id
+            item.metadata_language = candidate.metadata_language or RU_LANGUAGE
         item.tmdb_id = candidate.tmdb_id
         item.tmdb_media_type = candidate.media_type
         item.matched_title = candidate.title
@@ -85,6 +122,9 @@ class TMDBService:
         item.match_confidence = candidate.score
         item.status = MediaItemStatus.MATCHED
         item.needs_review = False
+
+        video_file = await self.media_files.get_video_for_media_item(item.id)
+        await self.processed_media.record_from_item(item, video_file, session_id=item.scan_session_id)
         await self.session.commit()
         await self.session.refresh(candidate)
         return candidate
@@ -107,7 +147,17 @@ class TMDBService:
             return item.status
 
         scored = sorted(
-            ((result, score_tmdb_candidate(score_title, score_year, result)) for result in results),
+            (
+                (
+                    result,
+                    score_tmdb_candidate(
+                        result.title,
+                        result.year or score_year,
+                        result,
+                    ),
+                )
+                for result in results
+            ),
             key=lambda pair: pair[1],
             reverse=True,
         )
@@ -124,14 +174,51 @@ class TMDBService:
             item.matched_title = best_candidate.title
             item.matched_year = best_candidate.year
             item.match_confidence = best_candidate.score
+            item.localized_title = best_candidate.title
+            item.localized_overview = best_candidate.overview
+            item.tmdb_original_title = best_candidate.original_title
+            item.poster_path = best_candidate.poster_path
+            item.backdrop_path = best_candidate.backdrop_path
+            item.poster_url = best_candidate.poster_url
+            item.backdrop_url = best_candidate.backdrop_url
+            item.imdb_id = best_candidate.imdb_id
+            item.tvdb_id = best_candidate.tvdb_id
+            item.wikidata_id = best_candidate.wikidata_id
+            item.metadata_language = best_candidate.metadata_language
             item.status = MediaItemStatus.MATCHED
             item.needs_review = False
         else:
             item.status = MediaItemStatus.NEEDS_REVIEW
             item.needs_review = True
 
+        for candidate in saved_candidates[:3]:
+            await self._enrich_candidate(candidate)
+        if best_candidate.score >= AUTO_SELECT_THRESHOLD:
+            item.imdb_id = best_candidate.imdb_id
+            item.tvdb_id = best_candidate.tvdb_id
+            item.wikidata_id = best_candidate.wikidata_id
+            item.poster_url = best_candidate.poster_url
+            item.backdrop_url = best_candidate.backdrop_url
+            item.metadata_language = best_candidate.metadata_language
+            if best_candidate.overview:
+                item.localized_overview = best_candidate.overview
+
         await self.session.flush()
         return item.status
+
+    async def _enrich_candidate(self, candidate: TmdbMatchCandidate) -> None:
+        try:
+            details = await fetch_localized_details(
+                self.client,
+                tmdb_id=candidate.tmdb_id,
+                media_type=candidate.media_type,
+            )
+            apply_details_to_candidate(candidate, details)
+            await self.session.flush()
+        except Exception:
+            candidate.poster_url = tmdb_image_url(candidate.poster_path)
+            candidate.backdrop_url = tmdb_image_url(candidate.backdrop_path, "w780")
+            candidate.metadata_language = candidate.metadata_language or RU_LANGUAGE
 
     async def _search_for_item(self, item: MediaItem) -> tuple[list[TmdbSearchResult], str | None, int | None]:
         media_type = _priority_media_type(item)
@@ -141,12 +228,24 @@ class TMDBService:
         for query in _priority_queries(item):
             year = _priority_year(item)
             if media_type == MediaType.MOVIE:
-                results = await self.client.search_movie(query=query, year=year)
+                results = await self._search_movie_with_fallback(query, year)
             else:
-                results = await self.client.search_tv(query=query, year=year)
+                results = await self._search_tv_with_fallback(query, year)
             if results:
                 return results, query, year
         return [], None, None
+
+    async def _search_movie_with_fallback(self, query: str, year: int | None) -> list[TmdbSearchResult]:
+        results = await self.client.search_movie(query=query, year=year, language=RU_LANGUAGE)
+        if results:
+            return results
+        return await self.client.search_movie(query=query, year=year, language=EN_LANGUAGE)
+
+    async def _search_tv_with_fallback(self, query: str, year: int | None) -> list[TmdbSearchResult]:
+        results = await self.client.search_tv(query=query, year=year, language=RU_LANGUAGE)
+        if results:
+            return results
+        return await self.client.search_tv(query=query, year=year, language=EN_LANGUAGE)
 
     def _candidate_from_result(self, media_item_id: int, result: TmdbSearchResult, score: float) -> TmdbMatchCandidate:
         return TmdbMatchCandidate(
@@ -161,6 +260,9 @@ class TMDBService:
             year=result.year,
             poster_path=result.poster_path,
             backdrop_path=result.backdrop_path,
+            poster_url=tmdb_image_url(result.poster_path),
+            backdrop_url=tmdb_image_url(result.backdrop_path, "w780"),
+            metadata_language=RU_LANGUAGE,
             vote_average=result.vote_average,
             popularity=result.popularity,
             raw_json=result.raw_json,
@@ -206,6 +308,14 @@ def _priority_year(item: MediaItem) -> int | None:
 
 def _priority_media_type(item: MediaItem) -> MediaType:
     for value in (item.gemini_media_type, item.ai_media_type, item.media_type):
-        if value in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
-            return MediaType(value)
+        if isinstance(value, MediaType) and value in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = MediaType(value)
+                if parsed in {MediaType.MOVIE, MediaType.TV_EPISODE, MediaType.TV_SHOW}:
+                    return parsed
+            except ValueError:
+                if value.upper() in {"MOVIE", "TV_EPISODE", "TV_SHOW"}:
+                    return MediaType(value.upper())
     return MediaType.UNKNOWN

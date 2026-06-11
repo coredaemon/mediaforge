@@ -39,6 +39,16 @@ class RecognitionMemoryRepository:
             delete(RecognitionCorrection).where(RecognitionCorrection.media_item_id.in_(media_item_ids))
         )
 
+    async def detach_corrections_for_media_items(self, media_item_ids: list[int]) -> None:
+        if not media_item_ids:
+            return
+        result = await self.session.execute(
+            select(RecognitionCorrection).where(RecognitionCorrection.media_item_id.in_(media_item_ids))
+        )
+        for correction in result.scalars().all():
+            correction.media_item_id = None
+        await self.session.flush()
+
     async def upsert_remove_token(self, token: str, source: str = "manual") -> RecognitionTokenRule | None:
         normalized = _normalize_token(token)
         if not normalized:

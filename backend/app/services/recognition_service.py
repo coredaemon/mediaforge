@@ -140,13 +140,13 @@ class RecognitionService:
 
         for item in items:
             started = time.perf_counter()
-            if item.status == MediaItemStatus.MATCHED:
+            if item.reused_from_memory or item.status == MediaItemStatus.MATCHED:
                 self._mark_ai_diagnostics(
                     item,
                     use_gemini=use_gemini,
                     status="skipped",
                     duration_ms=0,
-                    error=None,
+                    error="Reused from processed media memory." if item.reused_from_memory else None,
                     response_valid_json=None,
                     model=getattr(client, "model", None) if client else None,
                 )
