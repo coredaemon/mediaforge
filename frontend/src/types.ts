@@ -273,9 +273,78 @@ export interface PlanOperation {
   target_path: string | null;
   payload_json: Record<string, unknown> | null;
   error_message: string | null;
+  validation_status?: string;
+  validation_error?: string | null;
+  validated_at?: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface BulkApproveRequest {
+  scope: "matched" | "selected";
+  item_ids?: number[];
+}
+
+export interface BulkReviewDecisionRequest {
+  item_ids: number[];
+  decision: "approved" | "ignored" | "deferred";
+  note?: string | null;
+}
+
+export interface BulkReviewResult {
+  approved_count: number;
+  skipped_count: number;
+  ignored_count: number;
+  deferred_count: number;
+}
+
+export interface PlanValidationResult {
+  ok_count: number;
+  warning_count: number;
+  conflict_count: number;
+  operations: PlanOperation[];
+}
+
+export interface PlanApplyRequest {
+  confirm: boolean;
+}
+
+export interface PlanApplyResult {
+  plan_id: number;
+  apply_run_id: number;
+  status: string;
+  total_operations: number;
+  done_operations: number;
+  failed_operations: number;
+  error_message: string | null;
+}
+
+export interface ApplyOperationLog {
+  id: number;
+  apply_run_id: number;
+  plan_operation_id: number;
+  operation_type: string;
+  status: string;
+  source_path: string | null;
+  target_path: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  rollback_data: Record<string, unknown> | null;
+}
+
+export interface ApplyRun {
+  id: number;
+  operation_plan_id: number;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  total_operations: number;
+  done_operations: number;
+  failed_operations: number;
+  error_message: string | null;
+  logs: ApplyOperationLog[];
 }
 
 export interface LlmPreflightCheck {

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
+  applyPlan,
   applyReviewDecision,
+  approveAllMatched,
+  bulkReviewDecision,
   createPlan,
   createRecognitionCorrection,
   deleteScanSession,
@@ -22,7 +25,11 @@ import {
   recognitionPreflight,
   resolveWithGemini,
   selectTmdbCandidate,
+  validatePlan,
 } from "../api";
+import { ApplyConfirmModal } from "../components/plan/ApplyConfirmModal";
+import { PlanApplyPanel } from "../components/plan/PlanApplyPanel";
+import { BulkReviewToolbar } from "../components/review/BulkReviewToolbar";
 import {
   formatAiStatusLabel,
   formatPreflightStatusLabel,
@@ -36,23 +43,28 @@ import { candidateBackdropUrl, candidatePosterUrl, tmdbImageUrl } from "../utils
 import {
   labelMediaItemStatus,
   labelMediaType,
-  labelOperationPreview,
   labelOperationStatus,
   labelOperationType,
   labelPlanStatus,
+  labelReviewDecision,
   labelScanSessionStatus,
   statusTone,
   type BadgeTone,
 } from "../labels";
 import type {
+  BulkReviewResult,
   MediaFile,
   MediaItem,
   OperationPlan,
+  PlanApplyResult,
   PlanOperation,
+  PlanValidationResult,
   RecognitionPreflightResult,
   ScanSession,
   TmdbMatchCandidate,
 } from "../types";
+import { defaultSelectedIds, isBulkSelectable } from "../utils/bulkSelection";
+import { buildPlanSummary } from "../utils/planSummary";
 
 type StepStatus = "pending" | "running" | "done" | "error";
 
@@ -128,31 +140,6 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
     <div className="summary-card">
       <span>{label}</span>
       <strong>{value}</strong>
-    </div>
-  );
-}
-
-function OperationPreview({ operation }: { operation: PlanOperation }) {
-  return (
-    <div className="operation-preview">
-      <div>
-        <strong>{labelOperationPreview(operation.operation_type)}</strong>
-        <Badge value={operation.status} label={labelOperationStatus(operation.status)} />
-      </div>
-      <div className="operation-paths">
-        {operation.source_path ? (
-          <div>
-            <span>Откуда</span>
-            <code>{operation.source_path}</code>
-          </div>
-        ) : null}
-        {operation.target_path ? (
-          <div>
-            <span>Куда</span>
-            <code>{operation.target_path}</code>
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -247,6 +234,13 @@ export function SessionDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [preflightResult, setPreflightResult] = useState<RecognitionPreflightResult | null>(null);
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<number>>(new Set());
+  const [bulkResult, setBulkResult] = useState<BulkReviewResult | null>(null);
+  const [validationResult, setValidationResult] = useState<PlanValidationResult | null>(null);
+  const [applyResult, setApplyResult] = useState<PlanApplyResult | null>(null);
+  const [showApplyModal, setShowApplyModal] = useState(false);
+  const [applyConfirmChecked, setApplyConfirmChecked] = useState(false);
+  const [analysisCollapsed, setAnalysisCollapsed] = useState(false);
   const candidatesPanelRef = useRef<HTMLElement | null>(null);
 
   const latestPlanId = plans[0]?.id ?? null;
@@ -298,6 +292,9 @@ export function SessionDetailPage() {
     const review = items.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN").length;
     const reused = items.filter((item) => item.reused_from_memory).length;
     const fresh = items.filter((item) => !item.reused_from_memory).length;
+    const ignored = items.filter((item) => item.review_decision === "ignored").length;
+    const deferred = items.filter((item) => item.review_decision === "deferred").length;
+    const planSummary = buildPlanSummary(operations, items, validationResult?.conflict_count ?? 0);
     return {
       totalFiles: files.length,
       video,
@@ -307,9 +304,12 @@ export function SessionDetailPage() {
       review,
       reused,
       fresh,
+      ignored,
+      deferred,
       operations: operations.length,
+      conflicts: planSummary.conflicts,
     };
-  }, [files, items, operations]);
+  }, [files, items, operations, validationResult]);
 
   const planExcluded = useMemo(() => {
     const ignored = items.filter((item) => item.review_decision === "ignored").length;
@@ -384,6 +384,7 @@ export function SessionDetailPage() {
         await matchTmdbSession(numId, true);
       });
       await runStep("plan", () => createPlan(numId, true));
+      setAnalysisCollapsed(true);
       setInfo("Анализ завершён. Проверьте найденные объекты и безопасный план.");
     } catch (err) {
       const failed = Object.entries(nextStatus).find(([, status]) => status === "running")?.[0];
@@ -429,6 +430,86 @@ export function SessionDetailPage() {
   async function showOperations(planId: number) {
     setSelectedPlanId(planId);
     setOperations(await listPlanOperations(planId));
+    setValidationResult(null);
+    setApplyResult(null);
+  }
+
+  useEffect(() => {
+    if (items.length > 0 && selectedItemIds.size === 0) {
+      setSelectedItemIds(new Set(defaultSelectedIds(items)));
+    }
+  }, [items, selectedItemIds.size]);
+
+  const activePlan = plans.find((p) => p.id === (selectedPlanId ?? latestPlanId)) ?? plans[0] ?? null;
+  const planStale = useMemo(() => {
+    if (!activePlan) return false;
+    const planTime = new Date(activePlan.updated_at).getTime();
+    return items.some(
+      (item) => item.reviewed_at && new Date(item.reviewed_at).getTime() > planTime,
+    );
+  }, [activePlan, items]);
+
+  async function handleBulkApproveAll() {
+    await runAction("bulk-approve-all", async () => {
+      const result = await approveAllMatched(numId, { scope: "matched" });
+      setBulkResult(result);
+      setInfo(`Одобрено: ${result.approved_count} · пропущено: ${result.skipped_count}`);
+    }, "Массовое одобрение завершено.");
+  }
+
+  async function handleBulkApproveSelected() {
+    const ids = [...selectedItemIds];
+    if (ids.length === 0) return;
+    await runAction("bulk-approve-selected", async () => {
+      const result = await approveAllMatched(numId, { scope: "selected", item_ids: ids });
+      setBulkResult(result);
+      setInfo(`Одобрено: ${result.approved_count} · пропущено: ${result.skipped_count}`);
+    }, "Выбранные объекты одобрены.");
+  }
+
+  async function handleBulkDecision(decision: "ignored" | "deferred") {
+    const ids = [...selectedItemIds];
+    if (ids.length === 0) return;
+    const note = decision === "ignored" ? "Не добавлять" : "Отложено";
+    await runAction(`bulk-${decision}`, async () => {
+      const result = await bulkReviewDecision(numId, { item_ids: ids, decision, note });
+      setBulkResult(result);
+    }, decision === "ignored" ? "Выбранные объекты исключены." : "Выбранные объекты отложены.");
+  }
+
+  async function handleValidatePlan() {
+    const planId = selectedPlanId ?? latestPlanId;
+    if (planId === null) return;
+    await runAction("validate-plan", async () => {
+      const result = await validatePlan(planId);
+      setValidationResult(result);
+      setOperations(result.operations);
+      setInfo(
+        `Проверка: OK ${result.ok_count}, предупреждения ${result.warning_count}, конфликты ${result.conflict_count}`,
+      );
+    }, "План проверен.");
+  }
+
+  async function handleApplyPlan() {
+    const planId = selectedPlanId ?? latestPlanId;
+    if (planId === null) return;
+    setShowApplyModal(false);
+    await runAction("apply-plan", async () => {
+      const result = await applyPlan(planId, { confirm: true });
+      setApplyResult(result);
+      setInfo(`Применено ${result.done_operations} из ${result.total_operations} операций.`);
+      setOperations(await listPlanOperations(planId));
+      setPlans(await listPlans(numId));
+    }, "План применён.");
+  }
+
+  function toggleItemSelection(itemId: number) {
+    setSelectedItemIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
   }
 
   if (!Number.isFinite(numId)) {
@@ -465,7 +546,9 @@ export function SessionDetailPage() {
 
       {error ? <div className="message error">{error}</div> : null}
       {info ? <div className="message success">{info}</div> : null}
-      <div className="safety-notice">Это режим предварительного просмотра. Файлы пока не изменяются.</div>
+      <div className="safety-notice">
+        План — предварительный просмотр. Файлы изменятся только после явного подтверждения «Применить план».
+      </div>
 
       <section className="panel">
         <div className="section-heading">
@@ -500,24 +583,35 @@ export function SessionDetailPage() {
         <div className="section-heading">
           <div>
             <h3>Анализ медиатеки</h3>
-            <p>
-              MediaForge просканирует папку, распознает имена файлов, найдёт совпадения в TMDB и построит
-              безопасный план. Файлы не будут изменены.
-            </p>
+            {analysisCollapsed && preflightResult?.ok ? (
+              <p className="muted compact-preflight-status">
+                AI проверен
+                {preflightResult.local.ok ? ": локальная модель работает" : ": локальная модель недоступна"}
+                {preflightResult.cloud.ok ? ", основная облачная работает" : ", основная облачная недоступна"}
+                {preflightResult.cloud_fallback?.ok ? ", использована запасная" : ""}
+              </p>
+            ) : (
+              <p className="muted">
+                MediaForge просканирует папку, распознает имена файлов, найдёт совпадения в TMDB и построит план.
+              </p>
+            )}
           </div>
           <button className="btn-primary analysis-button" disabled={busy} onClick={() => void runFullAnalysis()}>
             {actionLoading === "analysis" ? "Анализ выполняется..." : "Начать анализ"}
           </button>
         </div>
-        <PreflightPanel result={preflightResult} status={stepStatus.preflight ?? "pending"} />
-        <div className="analysis-steps">
-          {analysisSteps.map((step) => (
-            <div key={step.key} className="analysis-step">
-              <span>{step.label}</span>
-              <StepBadge status={stepStatus[step.key] ?? "pending"} />
-            </div>
-          ))}
-        </div>
+        {preflightResult?.warning ? <div className="message warning compact-ai-warning">{preflightResult.warning}</div> : null}
+        <details className="analysis-details" open={!analysisCollapsed}>
+          <summary>Статус pipeline и AI preflight</summary>
+          <PreflightPanel result={preflightResult} status={stepStatus.preflight ?? "pending"} />
+          <div className="analysis-steps compact-analysis-steps">
+            {analysisSteps.map((step) => (
+              <span key={step.key} className="analysis-step-chip">
+                {step.label} <StepBadge status={stepStatus[step.key] ?? "pending"} />
+              </span>
+            ))}
+          </div>
+        </details>
         <details className="manual-mode">
           <summary>Ручной режим</summary>
           <div className="pipeline-actions">
@@ -546,80 +640,94 @@ export function SessionDetailPage() {
         </details>
       </section>
 
-      <section className="panel">
+      <section className="summary-dashboard">
+        <SummaryCard label="Всего файлов" value={summary.totalFiles} />
+        <SummaryCard label="Видео" value={summary.video} />
+        <SummaryCard label="Новых" value={summary.fresh} />
+        <SummaryCard label="Уже обработано" value={summary.reused} />
+        <SummaryCard label="Найдено" value={summary.matched} />
+        <SummaryCard label="Требуют проверки" value={summary.review} />
+        <SummaryCard label="Исключено" value={summary.ignored} />
+        <SummaryCard label="Отложено" value={summary.deferred} />
+        <SummaryCard label="Операций в плане" value={summary.operations} />
+        <SummaryCard label="Конфликтов" value={summary.conflicts} />
+      </section>
+
+      <section className="panel review-main-panel">
         <div className="section-heading">
-          <h3>Решение по найденным объектам</h3>
+          <h3>Проверка найденных фильмов</h3>
           <span className="muted">
             В план: {planExcluded.plannable} · исключено: {planExcluded.ignored} · отложено: {planExcluded.deferred}
           </span>
         </div>
-        <ReviewDecisionsList
-          items={items}
+        <BulkReviewToolbar
           busy={busy}
+          selectedCount={selectedItemIds.size}
+          lastResult={bulkResult}
+          onApproveAll={() => void handleBulkApproveAll()}
+          onApproveSelected={() => void handleBulkApproveSelected()}
+          onIgnoreSelected={() => void handleBulkDecision("ignored")}
+          onDeferSelected={() => void handleBulkDecision("deferred")}
+          onClearSelection={() => setSelectedItemIds(new Set())}
+          onRebuildPlan={() => void runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
+        />
+        <ItemList
+          variant="matched"
+          items={matchedItems}
+          busy={busy}
+          selectable
+          selectedIds={selectedItemIds}
+          onToggleSelect={toggleItemSelection}
+          onCandidates={showCandidates}
           onDecision={async (itemId, payload) => {
             await applyReviewDecision(itemId, payload);
             await loadAll();
           }}
-          onRebuildPlan={() => runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
+          onCorrection={async (item, payload) => {
+            await createRecognitionCorrection(item.id, payload);
+            await matchTmdbSession(numId, true);
+            await loadAll();
+          }}
         />
       </section>
 
-      <section className="summary-dashboard">
-        <SummaryCard label="Всего файлов" value={summary.totalFiles} />
-        <SummaryCard label="Видео" value={summary.video} />
-        <SummaryCard label="Субтитры" value={summary.subtitles} />
-        <SummaryCard label="Распознано объектов" value={summary.items} />
-        <SummaryCard label="Новых файлов" value={summary.fresh} />
-        <SummaryCard label="Уже обработано ранее" value={summary.reused} />
-        <SummaryCard label="Найдено в TMDB" value={summary.matched} />
-        <SummaryCard label="Требуют проверки" value={summary.review} />
-        <SummaryCard label="Операций в плане" value={summary.operations} />
-      </section>
+      {reviewItems.length > 0 ? (
+        <section className="panel compact-review-section">
+          <div className="section-heading">
+            <h3>Требуют проверки</h3>
+            <span className="muted">{reviewItems.length}</span>
+          </div>
+          <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
+            await applyReviewDecision(itemId, payload);
+            await loadAll();
+          }} onCorrection={async (item, payload) => {
+            await createRecognitionCorrection(item.id, payload);
+            await matchTmdbSession(numId, true);
+            await loadAll();
+          }} />
+        </section>
+      ) : (
+        <p className="muted compact-section-row">Требуют проверки: 0</p>
+      )}
 
-      <section className="panel">
-        <div className="section-heading">
-          <h3>Найдено в TMDB</h3>
-          <span className="muted">{matchedItems.length}</span>
-        </div>
-        <ItemList variant="matched" items={matchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
-          await applyReviewDecision(itemId, payload);
-          await loadAll();
-        }} onCorrection={async (item, payload) => {
-          await createRecognitionCorrection(item.id, payload);
-          await matchTmdbSession(numId, true);
-          await loadAll();
-        }} />
-      </section>
-
-      <section className="panel">
-        <div className="section-heading">
-          <h3>Требуют проверки</h3>
-          <span className="muted">{reviewItems.length}</span>
-        </div>
-        <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
-          await applyReviewDecision(itemId, payload);
-          await loadAll();
-        }} onCorrection={async (item, payload) => {
-          await createRecognitionCorrection(item.id, payload);
-          await matchTmdbSession(numId, true);
-          await loadAll();
-        }} />
-      </section>
-
-      <section className="panel">
-        <div className="section-heading">
-          <h3>Не найдено</h3>
-          <span className="muted">{unmatchedItems.length}</span>
-        </div>
-        <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
-          await applyReviewDecision(itemId, payload);
-          await loadAll();
-        }} onCorrection={async (item, payload) => {
-          await createRecognitionCorrection(item.id, payload);
-          await matchTmdbSession(numId, true);
-          await loadAll();
-        }} />
-      </section>
+      {unmatchedItems.length > 0 ? (
+        <section className="panel compact-review-section">
+          <div className="section-heading">
+            <h3>Не найдено</h3>
+            <span className="muted">{unmatchedItems.length}</span>
+          </div>
+          <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
+            await applyReviewDecision(itemId, payload);
+            await loadAll();
+          }} onCorrection={async (item, payload) => {
+            await createRecognitionCorrection(item.id, payload);
+            await matchTmdbSession(numId, true);
+            await loadAll();
+          }} />
+        </section>
+      ) : (
+        <p className="muted compact-section-row">Не найдено: 0</p>
+      )}
 
       {otherItems.length > 0 ? (
         <section className="panel">
@@ -667,48 +775,32 @@ export function SessionDetailPage() {
         </section>
       ) : null}
 
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <h3>План операций</h3>
-            <p className="muted">Это только план. Файлы пока не изменяются.</p>
-            {planExcluded.ignored + planExcluded.deferred > 0 ? (
-              <p className="message warning">
-                {planExcluded.ignored + planExcluded.deferred} объект(ов) исключено из плана
-                ({planExcluded.ignored} не добавлять, {planExcluded.deferred} отложено).
-              </p>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
-          >
-            Пересобрать план
-          </button>
-        </div>
-        {plans.length > 0 ? (
-          <div className="plan-tabs">
-            {plans.map((plan) => (
-              <button
-                key={plan.id}
-                type="button"
-                className={plan.id === (selectedPlanId ?? latestPlanId) ? "active" : ""}
-                onClick={() => void showOperations(plan.id)}
-              >
-                План #{plan.id} · {labelPlanStatus(plan.status)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="muted">План ещё не построен.</p>
-        )}
-        <div className="operation-list">
-          {operations.map((operation) => (
-            <OperationPreview key={operation.id} operation={operation} />
-          ))}
-        </div>
-      </section>
+      <PlanApplyPanel
+        plans={plans}
+        selectedPlanId={selectedPlanId ?? latestPlanId}
+        operations={operations}
+        items={items}
+        validation={validationResult}
+        applyResult={applyResult}
+        busy={busy}
+        planStale={planStale}
+        onSelectPlan={(planId) => void showOperations(planId)}
+        onValidate={() => void handleValidatePlan()}
+        onApplyClick={() => {
+          setApplyConfirmChecked(false);
+          setShowApplyModal(true);
+        }}
+        onRebuildPlan={() => void runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
+      />
+
+      <ApplyConfirmModal
+        open={showApplyModal}
+        busy={busy}
+        checked={applyConfirmChecked}
+        onCheckedChange={setApplyConfirmChecked}
+        onConfirm={() => void handleApplyPlan()}
+        onCancel={() => setShowApplyModal(false)}
+      />
 
       <details className="panel">
         <summary>Технические детали</summary>
@@ -749,6 +841,9 @@ function ItemList({
   items,
   variant,
   busy,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
   onCandidates,
   onCorrection,
   onDecision,
@@ -756,6 +851,9 @@ function ItemList({
   items: MediaItem[];
   variant: "matched" | "review";
   busy: boolean;
+  selectable?: boolean;
+  selectedIds?: Set<number>;
+  onToggleSelect?: (itemId: number) => void;
   onCandidates: (itemId: number) => Promise<void>;
   onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
   onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
@@ -764,13 +862,16 @@ function ItemList({
     return <p className="muted">Нет объектов в этом разделе.</p>;
   }
   return (
-    <div className="item-list">
+    <div className={`item-list ${selectable ? "item-list-selectable" : ""}`}>
       {items.map((item) => (
         <MediaItemCard
           key={item.id}
           item={item}
           variant={variant}
           busy={busy}
+          selectable={selectable && isBulkSelectable(item)}
+          selected={selectedIds?.has(item.id) ?? false}
+          onToggleSelect={onToggleSelect}
           onCandidates={onCandidates}
           onCorrection={onCorrection}
           onDecision={onDecision}
@@ -784,6 +885,9 @@ function MediaItemCard({
   item,
   variant,
   busy,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
   onCandidates,
   onCorrection,
   onDecision,
@@ -791,6 +895,9 @@ function MediaItemCard({
   item: MediaItem;
   variant: "matched" | "review";
   busy: boolean;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (itemId: number) => void;
   onCandidates: (itemId: number) => Promise<void>;
   onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
   onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
@@ -799,9 +906,24 @@ function MediaItemCard({
   const poster = item.poster_url ?? tmdbImageUrl(item.poster_path) ?? (localPoster ? `file:///${localPoster.replace(/\\/g, "/")}` : null);
   const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `Объект #${item.id}`;
   const badges = getItemBadges(item);
+  const isIgnored = item.review_decision === "ignored";
+  const isDeferred = item.review_decision === "deferred";
+  const isApproved = item.review_decision === "approved" || item.review_decision === "manual_override";
   return (
-    <div className={`item-card visual-item-card ${item.reused_from_memory ? "memory-reused" : ""}`}>
+    <div
+      className={`item-card visual-item-card ${item.reused_from_memory ? "memory-reused" : ""} ${isIgnored || isDeferred ? "review-muted" : ""}`}
+    >
       <div className="visual-item-layout">
+        {selectable ? (
+          <label className="item-select-checkbox">
+            <input
+              type="checkbox"
+              checked={selected}
+              disabled={busy}
+              onChange={() => onToggleSelect?.(item.id)}
+            />
+          </label>
+        ) : null}
         <div className="visual-item-poster">
           {poster ? <img src={poster} alt={title} loading="lazy" /> : <div className="poster-placeholder">Нет постера</div>}
         </div>
@@ -831,17 +953,54 @@ function MediaItemCard({
             <span>Уверенность: {formatPercent(item.match_confidence ?? item.ai_confidence ?? item.confidence)}</span>
           </div>
           {item.localized_overview ? <p className="item-overview">{item.localized_overview}</p> : null}
+          <div className="item-review-actions">
+            {isApproved ? (
+              <button type="button" disabled className="btn-muted">
+                Одобрено
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onDecision(item.id, { decision: "approved", note: "Подтверждено пользователем" })}
+              >
+                Добавить
+              </button>
+            )}
+            {isIgnored || isDeferred ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onDecision(item.id, { decision: "approved", note: "Вернуть в план" })}
+              >
+                Вернуть в план
+              </button>
+            ) : (
+              <>
+                <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "ignored", note: "Не добавлять" })}>
+                  Не добавлять
+                </button>
+                <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "deferred", note: "Отложено" })}>
+                  Отложить
+                </button>
+              </>
+            )}
+            <button type="button" onClick={() => void onCandidates(item.id)}>
+              Кандидаты TMDB
+            </button>
+          </div>
+          <details className="manual-review-panel-wrap">
+            <summary>Ручная проверка</summary>
+            <ManualReviewPanel item={item} busy={busy} onCandidates={onCandidates} onDecision={onDecision} />
+          </details>
           <details className="recognition-tech-details">
             <summary>Технические детали распознавания</summary>
             <RecognitionEvidence item={item} />
             {variant === "review" ? <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} /> : null}
           </details>
-          <ManualReviewPanel item={item} busy={busy} onCandidates={onCandidates} onDecision={onDecision} />
-          <div className="item-actions">
-            <button type="button" onClick={() => void onCandidates(item.id)}>
-              Кандидаты TMDB
-            </button>
-          </div>
+          {isIgnored ? <Badge value="ignored" label="Исключено" tone="warning" /> : null}
+          {isDeferred ? <Badge value="deferred" label="Отложено" tone="warning" /> : null}
+          {isApproved ? <Badge value="approved" label={labelReviewDecision(item.review_decision)} tone="success" /> : null}
         </div>
       </div>
     </div>
@@ -1037,8 +1196,7 @@ function ManualReviewPanel({
   const [idError, setIdError] = useState<string | null>(null);
 
   return (
-    <details className="manual-review-panel" open={item.status !== "MATCHED"}>
-      <summary>Ручная проверка</summary>
+    <div className="manual-review-panel">
       <h4>Найти по названию</h4>
       <div className="manual-review-grid">
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
@@ -1138,7 +1296,7 @@ function ManualReviewPanel({
           Сохранить исправление
         </button>
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -1222,52 +1380,6 @@ function ManualCandidateSearch({
   );
 }
 
-function ReviewDecisionsList({
-  items,
-  busy,
-  onDecision,
-  onRebuildPlan,
-}: {
-  items: MediaItem[];
-  busy: boolean;
-  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
-  onRebuildPlan: () => void;
-}) {
-  if (items.length === 0) return <p className="muted">Объектов пока нет.</p>;
-  return (
-    <div className="review-decisions-list">
-      {items.map((item) => {
-        const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `#${item.id}`;
-        const badges = getItemBadges(item);
-        return (
-          <div key={item.id} className="review-decision-row">
-            <div>
-              <strong>{title}</strong>
-              {badges.map((badge) => (
-                <Badge key={badge.key} value={badge.key} label={badge.label} tone={badge.tone} />
-              ))}
-            </div>
-            <div className="review-decision-actions">
-              <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "approved" })}>
-                Добавить
-              </button>
-              <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "ignored" })}>
-                Не добавлять
-              </button>
-              <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "deferred" })}>
-                Отложить
-              </button>
-            </div>
-          </div>
-        );
-      })}
-      <button type="button" disabled={busy} onClick={onRebuildPlan}>
-        Пересобрать план
-      </button>
-    </div>
-  );
-}
-
 function TechnicalTables({
   files,
   items,
@@ -1335,22 +1447,25 @@ function TechnicalTables({
           </tbody>
         </table>
       </div>
-      <h4>Операции</h4>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {operations.map((op) => (
-              <tr key={op.id}>
-                <td>{op.id}</td>
-                <td>{labelOperationType(op.operation_type)}</td>
-                <td>{labelOperationStatus(op.status)}</td>
-                <td className="path-text">{op.source_path ?? "—"}</td>
-                <td className="path-text">{op.target_path ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <details>
+        <summary>Технический список операций</summary>
+        <div className="table-wrap">
+          <table>
+            <tbody>
+              {operations.map((op) => (
+                <tr key={op.id}>
+                  <td>{op.id}</td>
+                  <td>{labelOperationType(op.operation_type)}</td>
+                  <td>{labelOperationStatus(op.status)}</td>
+                  <td>{op.validation_status ?? "—"}</td>
+                  <td className="path-text">{op.source_path ?? "—"}</td>
+                  <td className="path-text">{op.target_path ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }

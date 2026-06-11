@@ -905,3 +905,142 @@ th {
   margin: 0.75rem 0 0.35rem;
   font-size: 0.95rem;
 }
+
+.bulk-review-toolbar {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.bulk-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.item-list-selectable {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 1rem;
+}
+
+.item-select-checkbox {
+  align-self: start;
+  padding-top: 0.5rem;
+}
+
+.review-muted {
+  opacity: 0.72;
+}
+
+.item-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.compact-section-row {
+  margin: 0.5rem 0;
+  padding: 0 0.25rem;
+}
+
+.compact-analysis-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.analysis-step-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: #f3f4f6;
+  font-size: 0.85rem;
+}
+
+.plan-apply-panel .plan-summary-line {
+  margin: 0.25rem 0;
+}
+
+.plan-apply-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.plan-grouped-operations {
+  margin-top: 1rem;
+}
+
+.plan-ready-summary {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.plan-movie-group {
+  margin-bottom: 0.5rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+.plan-op-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.plan-op-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+
+.modal-card {
+  max-width: 520px;
+  width: 100%;
+  background: #fff;
+  border-radius: 12px;
+  padding: 1.25rem;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.apply-confirm-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+  .item-list-selectable {
+    grid-template-columns: 1fr;
+  }
+}

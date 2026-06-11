@@ -97,6 +97,9 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("processed_media_records", "sidecar_source_path", "TEXT", ""),
     ("processed_media_records", "local_poster_path", "VARCHAR(1024)", ""),
     ("processed_media_records", "local_backdrop_path", "VARCHAR(1024)", ""),
+    ("plan_operations", "validation_status", "VARCHAR(32)", "DEFAULT 'pending'"),
+    ("plan_operations", "validation_error", "TEXT", ""),
+    ("plan_operations", "validated_at", "DATETIME", ""),
 ]
 
 

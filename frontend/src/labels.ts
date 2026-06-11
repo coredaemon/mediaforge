@@ -60,9 +60,19 @@ const planStatusLabels: Record<string, string> = {
   DRAFT: "Черновик",
   READY: "Готов",
   APPLYING: "Применяется",
+  APPLIED: "Применён",
+  PARTIAL: "Частично",
   COMPLETED: "Выполнен",
   FAILED: "Ошибка",
   ROLLED_BACK: "Откачен",
+};
+
+const reviewDecisionLabels: Record<string, string> = {
+  pending: "Ожидает решения",
+  approved: "Подтверждено",
+  ignored: "Исключено",
+  deferred: "Отложено",
+  manual_override: "Исправлено вручную",
 };
 
 export function labelMediaType(value: string | null | undefined): string {
@@ -93,9 +103,14 @@ export function labelPlanStatus(value: string | null | undefined): string {
   return value ? (planStatusLabels[value] ?? value) : "Неизвестно";
 }
 
+export function labelReviewDecision(value: string | null | undefined): string {
+  return value ? (reviewDecisionLabels[value] ?? value) : "Неизвестно";
+}
+
 export function statusTone(value: string | null | undefined): BadgeTone {
   if (!value) return "neutral";
-  if (["MATCHED", "READY", "DONE", "COMPLETED", "PARSED", "DISCOVERED"].includes(value)) return "success";
+  if (["MATCHED", "READY", "DONE", "COMPLETED", "APPLIED", "PARSED", "DISCOVERED", "approved"].includes(value)) return "success";
+  if (["ignored", "deferred"].includes(value)) return "warning";
   if (["NEEDS_REVIEW", "DRAFT"].includes(value)) return "warning";
   if (["FAILED", "UNMATCHED"].includes(value)) return "danger";
   if (["DISCOVERING", "PARSING", "MATCHING", "RUNNING", "APPLYING"].includes(value)) return "info";

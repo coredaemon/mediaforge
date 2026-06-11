@@ -1,6 +1,6 @@
-from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..models.enums import ReviewDecision
 
@@ -33,3 +33,27 @@ class ReviewDecisionRequest(BaseModel):
 class TmdbManualLookupResponse(BaseModel):
     candidate_id: int
     warning: str | None = None
+
+
+class BulkApproveRequest(BaseModel):
+    scope: Literal["matched", "selected"]
+    item_ids: list[int] | None = None
+
+    @model_validator(mode="after")
+    def validate_selected_scope(self) -> "BulkApproveRequest":
+        if self.scope == "selected" and not self.item_ids:
+            raise ValueError("item_ids is required when scope is 'selected'")
+        return self
+
+
+class BulkReviewDecisionRequest(BaseModel):
+    item_ids: list[int] = Field(min_length=1)
+    decision: Literal["approved", "ignored", "deferred"]
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class BulkReviewResult(BaseModel):
+    approved_count: int
+    skipped_count: int
+    ignored_count: int
+    deferred_count: int

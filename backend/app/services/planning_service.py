@@ -164,8 +164,8 @@ class PlanningService:
             video_extension,
         )
         operations = [
-            self._create_dir_operation(target_folder),
-            self._move_file_operation(source_video_path, target_video_path),
+            self._create_dir_operation(target_folder, item.id),
+            self._move_file_operation(source_video_path, target_video_path, item.id),
             self._write_nfo_operation(
                 target_folder / "movie.nfo",
                 {"media_item_id": item.id, "nfo_type": "movie"},
@@ -201,8 +201,8 @@ class PlanningService:
         )
         show_folder = build_tv_show_folder_path(target_root, item.matched_title)
         operations = [
-            self._create_dir_operation(target_folder),
-            self._move_file_operation(source_video_path, target_video_path),
+            self._create_dir_operation(target_folder, item.id),
+            self._move_file_operation(source_video_path, target_video_path, item.id),
         ]
         operations.extend(
             self._download_artwork_operations(
@@ -253,19 +253,21 @@ class PlanningService:
             )
         return operations
 
-    def _create_dir_operation(self, target_folder: Path) -> PlanOperation:
+    def _create_dir_operation(self, target_folder: Path, media_item_id: int) -> PlanOperation:
         return PlanOperation(
             operation_type=OperationType.CREATE_DIR,
             status=OperationStatus.PENDING,
             target_path=str(target_folder),
+            payload_json={"media_item_id": media_item_id},
         )
 
-    def _move_file_operation(self, source_path: Path, target_path: Path) -> PlanOperation:
+    def _move_file_operation(self, source_path: Path, target_path: Path, media_item_id: int) -> PlanOperation:
         return PlanOperation(
             operation_type=OperationType.MOVE_FILE,
             status=OperationStatus.PENDING,
             source_path=str(source_path),
             target_path=str(target_path),
+            payload_json={"media_item_id": media_item_id},
         )
 
     def _write_nfo_operation(self, target_path: Path, payload: dict) -> PlanOperation:

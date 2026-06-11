@@ -285,6 +285,11 @@ MediaForge проверяет пути при создании сессии. З�
 | POST | `/scan-sessions/{id}/plan` | Построить план |
 | GET | `/scan-sessions/{id}/plans` | Планы сессии |
 | GET | `/operation-plans/{id}/operations` | Операции плана |
+| POST | `/scan-sessions/{id}/review/approve-all` | Массовое одобрение |
+| POST | `/scan-sessions/{id}/review/bulk-decision` | Массовое решение по выбранным |
+| POST | `/operation-plans/{id}/validate` | Проверить план перед apply |
+| POST | `/operation-plans/{id}/apply` | Применить план (`confirm: true`) |
+| GET | `/operation-plans/{id}/apply-runs` | Журнал применения |
 | POST | `/items/{id}/tmdb-search` | Ручной поиск TMDB |
 | POST | `/items/{id}/tmdb-lookup` | Lookup по TMDB/IMDb/TVDB ID |
 | POST | `/items/{id}/review-decision` | Решение пользователя |
@@ -324,7 +329,7 @@ ID lookup (manual → sidecar → memory) → NFO title/year → filename/AI →
 - **Отложить** — `deferred`, объект исключается из плана;
 - **Сохранить исправление** — `manual_override`, данные сохраняются в memory.
 
-На странице сессии блок **Решение по найденным объектам** показывает бейджи статуса и кнопки **Добавить / Не добавлять / Отложить** для каждого объекта.
+На странице сессии блок **Проверка найденных фильмов** объединяет карточки объектов, массовые действия и кнопки **Добавить / Не добавлять / Отложить** на каждой карточке.
 
 ## Поиск по TMDB ID / IMDb ID / TVDB ID
 
@@ -353,6 +358,25 @@ Endpoint: `POST /items/{item_id}/tmdb-candidates/{candidate_id}/select`
 
 После ручного выбора TMDB-кандидата нажмите **Пересобрать план**. UI вызовет `POST /scan-sessions/{id}/plan?force=true`, обновит список планов и операций и покажет сообщение **План пересобран**.
 
-## Apply ещё не реализован
+## Массовое подтверждение
 
-План операций является только preview. MediaForge показывает, какие папки будут созданы, какие файлы будут перемещены и какие метаданные или изображения будут записаны позднее, но на текущем этапе файлы не изменяются.
+В блоке **Проверка найденных фильмов** доступны массовые действия:
+
+- **Одобрить всё найденное** — `POST /scan-sessions/{id}/review/approve-all` с `scope: matched`. Одобряются только `MATCHED` объекты с `tmdb_id`, не требующие ручной проверки. `ignored` / `deferred` не меняются.
+- **Одобрить выбранные** — тот же endpoint с `scope: selected` и `item_ids`.
+- **Не добавлять / Отложить выбранные** — `POST /scan-sessions/{id}/review/bulk-decision`.
+
+После массового действия UI показывает счётчики: одобрено, пропущено, исключено, отложено.
+
+## Применение плана
+
+Workflow разделён на этапы:
+
+1. **Preview** — `POST /scan-sessions/{id}/plan` строит план без изменений на диске.
+2. **Validate** — `POST /operation-plans/{id}/validate` проверяет конфликты (существующие файлы, изменённые источники, небезопасные пути, недоверенные URL).
+3. **Confirm** — в UI нужен checkbox «Я понимаю, что файлы будут изменены».
+4. **Apply** — `POST /operation-plans/{id}/apply` с `{ "confirm": true }` выполняет операции последовательно.
+
+По умолчанию **существующие файлы не перезаписываются**. При конфликтах apply блокируется. Журнал сохраняется в `apply_runs` и `apply_operation_logs` (основа для будущего rollback).
+
+Поддерживаемые операции apply: `CREATE_DIR`, `MOVE_FILE`, `WRITE_TEXT_FILE` (movie.nfo), `DOWNLOAD_FILE` (только `https://image.tmdb.org/`).

@@ -8,6 +8,7 @@ from ..db.base import Base
 from .enums import PlanStatus
 
 if TYPE_CHECKING:
+    from .apply_run import ApplyRun
     from .plan_operation import PlanOperation
     from .scan_session import ScanSession
 
@@ -29,6 +30,10 @@ class OperationPlan(Base):
 
     scan_session: Mapped["ScanSession"] = relationship(back_populates="operation_plans")
     operations: Mapped[list["PlanOperation"]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+    )
+    apply_runs: Mapped[list["ApplyRun"]] = relationship(
         back_populates="plan",
         cascade="all, delete-orphan",
     )

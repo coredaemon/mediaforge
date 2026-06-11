@@ -33,6 +33,12 @@ class ItemReviewService:
         if item is None:
             raise MediaItemNotFoundError(f"Media item {item_id} was not found.")
 
+        await self._apply_decision_fields(item, payload)
+        await self.session.commit()
+        await self.session.refresh(item)
+        return MediaItemRead.model_validate(item)
+
+    async def _apply_decision_fields(self, item: MediaItem, payload: ReviewDecisionRequest) -> None:
         item.review_decision = payload.decision.value
         item.reviewed_at = datetime.now(UTC)
         item.review_note = payload.note
@@ -65,10 +71,6 @@ class ItemReviewService:
             video_file = await self.media_files.get_video_for_media_item(item.id)
             await self.processed_media.record_from_item(item, video_file, session_id=item.scan_session_id)
             await self._save_correction(item, payload)
-
-        await self.session.commit()
-        await self.session.refresh(item)
-        return MediaItemRead.model_validate(item)
 
     async def _apply_manual_override(self, item: MediaItem, payload: ReviewDecisionRequest) -> None:
         if payload.manual_tmdb_id or payload.manual_imdb_id or payload.manual_tvdb_id:

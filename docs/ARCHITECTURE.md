@@ -17,8 +17,8 @@ MediaForge is a local-first web application with a Python/FastAPI backend, SQLit
 - **Settings** stores local configuration including API keys — never committed to git.
 - **Filesystem Service** provides read-only directory browsing for the UI folder picker.
 - **Web UI** provides a Russian-language local browser interface for running and inspecting the pipeline.
-- **Apply Engine** — not implemented yet.
-- **Rollback Engine** — not implemented yet.
+- **Apply Engine** — validates and applies `READY` plans sequentially with logging.
+- **Rollback Engine** — not implemented yet (apply logs include `rollback_data`).
 
 ## Pipeline
 
@@ -160,7 +160,39 @@ Target paths follow library conventions:
 - Movies: `{target}/{Title} ({Year})/{Title} ({Year}){ext}` (no automatic `Movies` subfolder; `{target}` is the user-selected destination root)
 - TV episodes: `{target}/TV Shows/{Title}/Season 01/{Title} S01E01{ext}`
 
-Apply and rollback are not implemented yet.
+## Apply Flow
+
+```
+preview (plan) → validate → user confirm → apply → apply_run logs → (future rollback)
+```
+
+1. **Planning** builds a `READY` plan with `PENDING` operations.
+2. **Validation** (`PlanValidationService`) marks each `PlanOperation` with `validation_status`: `pending`, `ok`, `warning`, or `conflict`.
+3. **Apply** (`ApplyService`) requires `confirm=true`, re-validates, then executes operations sequentially.
+4. Each apply creates an `ApplyRun` and `ApplyOperationLog` rows with rollback metadata (e.g. move from/to paths).
+
+Plan statuses: `DRAFT`, `READY`, `APPLYING`, `APPLIED`, `FAILED`, `PARTIAL` (reserved), `ROLLED_BACK` (future).
+
+Operation statuses during apply: `PENDING` → `RUNNING` → `DONE` / `FAILED` / `SKIPPED`.
+
+Rollback UI is not implemented yet, but logs retain `rollback_data`.
+
+## Path Safety Rules
+
+Before validation and apply:
+
+- Source paths for `MOVE_FILE` must stay inside `scan_session.source_path`.
+- Target paths must stay inside `scan_session.target_path`.
+- Paths are normalized with `pathlib` (`resolve`) and checked with `relative_to`.
+- `DOWNLOAD_FILE` URLs must be HTTPS from `image.tmdb.org` only.
+- Escaping roots or `..` traversal is treated as a conflict/security error.
+
+## Bulk Review API
+
+- `POST /scan-sessions/{id}/review/approve-all` — bulk approve by `matched` or `selected` scope.
+- `POST /scan-sessions/{id}/review/bulk-decision` — bulk `approved` / `ignored` / `deferred` (no `manual_override`).
+
+Ignored and deferred items are excluded from planning via `list_plannable_by_scan_session`.
 
 ## Scan Session Deletion
 
@@ -202,11 +234,11 @@ On first launch, the React app calls `GET /settings` and checks `setup_completed
 
 The "Настройки" button in the header always allows returning to the wizard for editing.
 
-## Safe Preview Mode
+## Safe Preview and Apply Mode
 
-The entire current UI communicates to users that no files are modified. The session detail page shows a persistent notice: "MediaForge работает в безопасном режиме preview. Файлы не перемещаются и не изменяются."
+The session detail page shows that the plan is preview-only until the user explicitly confirms apply. Files change on disk only after **Применить план** with the confirmation checkbox.
 
-Apply and rollback workflows are not implemented yet.
+Apply is blocked when validation reports conflicts or the plan is not `READY`.
 
 ## Web UI Layer
 

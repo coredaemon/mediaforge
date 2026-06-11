@@ -14,9 +14,11 @@ from ...repositories.media_item_repository import MediaItemRepository
 from ...schemas.media_file import MediaFileRead
 from ...schemas.media_item import MediaItemRead
 from ...schemas.operation_plan import OperationPlanRead
+from ...schemas.review import BulkApproveRequest, BulkReviewDecisionRequest, BulkReviewResult
 from ...schemas.recognition import RecognitionNormalizeResult
 from ...schemas.scan_session import ScanSessionCreate, ScanSessionDeleteResult, ScanSessionListItem, ScanSessionRead
 from ...schemas.tmdb import TmdbMatchResult
+from ...services.bulk_review_service import BulkReviewError, BulkReviewService
 from ...services.parser_service import ParserService
 from ...services.planning_service import NoMatchedItemsError, PlanningService
 from ...services.recognition_clients import TitleNormalizerClient
@@ -247,3 +249,29 @@ async def list_scan_session_plans(
         return await PlanningService(session).list_plans_for_scan_session(session_id)
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/review/approve-all", response_model=BulkReviewResult)
+async def approve_all_review_items(
+    session_id: int,
+    payload: BulkApproveRequest,
+    session: AsyncSession = Depends(get_session),
+) -> BulkReviewResult:
+    try:
+        return await BulkReviewService(session).approve_all(session_id, payload)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{session_id}/review/bulk-decision", response_model=BulkReviewResult)
+async def bulk_review_decision(
+    session_id: int,
+    payload: BulkReviewDecisionRequest,
+    session: AsyncSession = Depends(get_session),
+) -> BulkReviewResult:
+    try:
+        return await BulkReviewService(session).bulk_decision(session_id, payload)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except BulkReviewError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

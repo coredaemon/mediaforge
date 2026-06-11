@@ -9,8 +9,15 @@ import type {
   LocalModelsResult,
   MediaFile,
   MediaItem,
+  ApplyRun,
+  BulkApproveRequest,
+  BulkReviewDecisionRequest,
+  BulkReviewResult,
   OperationPlan,
+  PlanApplyRequest,
+  PlanApplyResult,
   PlanOperation,
+  PlanValidationResult,
   RecognitionCorrection,
   RecognitionCorrectionCreate,
   RecognitionNormalizeResult,
@@ -159,6 +166,35 @@ export function listPlans(sessionId: number): Promise<OperationPlan[]> {
 
 export function listPlanOperations(planId: number): Promise<PlanOperation[]> {
   return request<PlanOperation[]>(`/operation-plans/${planId}/operations`);
+}
+
+export function approveAllMatched(sessionId: number, payload: BulkApproveRequest): Promise<BulkReviewResult> {
+  return request<BulkReviewResult>(`/scan-sessions/${sessionId}/review/approve-all`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function bulkReviewDecision(sessionId: number, payload: BulkReviewDecisionRequest): Promise<BulkReviewResult> {
+  return request<BulkReviewResult>(`/scan-sessions/${sessionId}/review/bulk-decision`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function validatePlan(planId: number): Promise<PlanValidationResult> {
+  return request<PlanValidationResult>(`/operation-plans/${planId}/validate`, { method: "POST" });
+}
+
+export function applyPlan(planId: number, payload: PlanApplyRequest): Promise<PlanApplyResult> {
+  return request<PlanApplyResult>(`/operation-plans/${planId}/apply`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listApplyRuns(planId: number): Promise<ApplyRun[]> {
+  return request<ApplyRun[]>(`/operation-plans/${planId}/apply-runs`);
 }
 
 export function listTmdbCandidates(itemId: number): Promise<TmdbMatchCandidate[]> {

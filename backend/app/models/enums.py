@@ -47,9 +47,25 @@ class PlanStatus(StrEnum):
     DRAFT = "DRAFT"
     READY = "READY"
     APPLYING = "APPLYING"
+    APPLIED = "APPLIED"
+    PARTIAL = "PARTIAL"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     ROLLED_BACK = "ROLLED_BACK"
+
+
+class ValidationStatus(StrEnum):
+    PENDING = "pending"
+    OK = "ok"
+    WARNING = "warning"
+    CONFLICT = "conflict"
+
+
+class ApplyRunStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PARTIAL = "partial"
 
 
 class OperationStatus(StrEnum):
