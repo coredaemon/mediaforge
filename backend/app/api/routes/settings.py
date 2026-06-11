@@ -5,9 +5,13 @@ from ...db.session import get_session
 from ...schemas.settings import (
     AppSettingsRead,
     AppSettingsUpdate,
+    CloudAiTestRequest,
+    CloudModelsRequest,
+    CloudModelsResult,
     LocalModelsResult,
     TestConnectionResult,
 )
+from ...schemas.recognition import LlmPreflightCheck
 from ...services.settings_service import SettingsService
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -37,6 +41,22 @@ async def test_tmdb(
 @router.post("/test-ai", response_model=TestConnectionResult)
 async def test_ai(session: AsyncSession = Depends(get_session)) -> TestConnectionResult:
     return await SettingsService(session).test_ai()
+
+
+@router.post("/cloud-ai/models", response_model=CloudModelsResult)
+async def get_cloud_ai_models(
+    payload: CloudModelsRequest,
+    session: AsyncSession = Depends(get_session),
+) -> CloudModelsResult:
+    return await SettingsService(session).get_cloud_models(payload)
+
+
+@router.post("/cloud-ai/test", response_model=LlmPreflightCheck | TestConnectionResult)
+async def test_cloud_ai(
+    payload: CloudAiTestRequest,
+    session: AsyncSession = Depends(get_session),
+) -> LlmPreflightCheck | TestConnectionResult:
+    return await SettingsService(session).test_cloud_ai(payload)
 
 
 @router.get("/local-ai/ollama/models", response_model=LocalModelsResult)

@@ -41,6 +41,7 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("media_items", "gemini_model", "VARCHAR(256)", ""),
     ("app_settings", "cloud_ai_provider", "VARCHAR(64)", ""),
     ("app_settings", "cloud_ai_api_key", "TEXT", ""),
+    ("app_settings", "cloud_ai_base_url", "TEXT", ""),
     ("app_settings", "cloud_ai_model", "VARCHAR(256)", ""),
     ("app_settings", "recognition_ai_enabled", "BOOLEAN", "DEFAULT 1"),
 ]

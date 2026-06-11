@@ -2,6 +2,9 @@ import type {
   AppSettingsRead,
   AppSettingsUpdate,
   BrowseResult,
+  CloudAiTestRequest,
+  CloudModelsRequest,
+  CloudModelsResult,
   HealthResponse,
   LocalModelsResult,
   MediaFile,
@@ -205,6 +208,20 @@ export function testTmdbConnection(apiKey?: string): Promise<TestConnectionResul
 
 export function testAiConnection(): Promise<TestConnectionResult> {
   return request<TestConnectionResult>("/settings/test-ai", { method: "POST" });
+}
+
+export function getCloudAiModels(payload: CloudModelsRequest): Promise<CloudModelsResult> {
+  return request<CloudModelsResult>("/settings/cloud-ai/models", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function testCloudAi(payload: CloudAiTestRequest): Promise<RecognitionPreflightResult["cloud"]> {
+  return request<RecognitionPreflightResult["cloud"]>("/settings/cloud-ai/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getOllamaModels(endpoint?: string): Promise<LocalModelsResult> {

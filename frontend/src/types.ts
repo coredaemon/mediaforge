@@ -164,6 +164,7 @@ export interface AppSettingsRead {
   ai_model: string | null;
   cloud_ai_configured: boolean;
   cloud_ai_provider: string | null;
+  cloud_ai_base_url: string | null;
   cloud_ai_model: string | null;
   recognition_ai_enabled: boolean;
   default_source_path: string | null;
@@ -180,6 +181,7 @@ export interface AppSettingsUpdate {
   ai_model?: string | null;
   cloud_ai_provider?: string | null;
   cloud_ai_api_key?: string | null;
+  cloud_ai_base_url?: string | null;
   cloud_ai_model?: string | null;
   recognition_ai_enabled?: boolean | null;
   default_source_path?: string | null;
@@ -243,4 +245,31 @@ export interface RecognitionPreflightResult {
   ok: boolean;
   local: LlmPreflightCheck;
   cloud: LlmPreflightCheck;
+}
+
+export interface CloudModel {
+  id: string;
+  label: string;
+  display_name: string | null;
+  description: string | null;
+  supported_generation_methods: string[];
+}
+
+export interface CloudModelsResult {
+  success: boolean;
+  models: CloudModel[];
+  message: string | null;
+}
+
+export interface CloudModelsRequest {
+  provider: string;
+  api_key?: string | null;
+  base_url?: string | null;
+}
+
+export interface CloudAiTestRequest {
+  provider: string;
+  model: string;
+  api_key?: string | null;
+  base_url?: string | null;
 }

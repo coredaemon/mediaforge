@@ -143,6 +143,8 @@ If AI-assisted recognition is enabled, analysis does not continue unless both lo
 
 Per-item diagnostics are saved for local AI and Gemini normalization: status, duration, model, JSON validity, and sanitized error text. These diagnostics are shown in the session review cards so it is visible whether AI actually ran.
 
+Cloud AI settings use the same flow as local providers: paste API key, fetch models from the provider, select a model from the dropdown, then test the selected model. Gemini model discovery calls the Gemini models API and filters models that support `generateContent`. OpenAI/ChatGPT-compatible discovery calls `/v1/models` on the configured provider endpoint. Empty key fields and placeholders such as `MediaOrganizer_API_Key`, `YOUR_API_KEY`, and `PASTE_API_KEY_HERE` are ignored and are never sent as real API keys.
+
 ## Workflow через UI
 
 1. Откройте `http://127.0.0.1:5173`

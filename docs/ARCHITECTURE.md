@@ -89,7 +89,14 @@ Implemented endpoints:
 
 `/recognition/preflight` sends real generation requests to the configured local LLM and Gemini cloud fallback. It validates that the model returns JSON with `ok: true`, the expected provider (`local` or `gemini`), and `test: "mediaforge-preflight"`. If AI-assisted recognition is enabled and either side fails, the UI stops the analysis before discovery/parse/TMDB and shows the failed provider, duration, model, error type, JSON validity, and sanitized response preview. API keys are never included in responses or logs.
 
-Local AI normalization reads `AppSettings.ai_provider`, `ai_base_url`, `ai_model`, and `ai_api_key` when needed. Supported normalization clients are Ollama, LM Studio/OpenAI-compatible endpoints, custom OpenAI-compatible endpoints, and Gemini fallback. API keys are passed only to outgoing requests and are never returned by read endpoints.
+Local AI normalization reads `AppSettings.ai_provider`, `ai_base_url`, `ai_model`, and `ai_api_key` when needed. Cloud fallback reads `cloud_ai_provider`, `cloud_ai_base_url`, `cloud_ai_model`, and `cloud_ai_api_key`. Supported clients are Ollama, LM Studio/OpenAI-compatible endpoints, custom OpenAI-compatible endpoints, Gemini, and OpenAI/ChatGPT-compatible cloud providers. API keys are passed only to outgoing requests and are never returned by read endpoints.
+
+Cloud model discovery is provider-backed:
+- Gemini uses the Gemini models API and returns models that support `generateContent`.
+- OpenAI/ChatGPT-compatible providers use `/v1/models`.
+- Custom OpenAI-compatible providers can use the configured `cloud_ai_base_url`; if discovery is unsupported, the UI still allows manual model input for custom only.
+
+Secret handling rejects empty strings and known placeholders such as `MediaOrganizer_API_Key`, `YOUR_API_KEY`, and `PASTE_API_KEY_HERE`. HTTP errors are sanitized before they are returned to the UI so query parameters such as `key=...` and bearer tokens are redacted.
 
 Manual corrections update the media item, save a correction row, and upsert remove-token rules. Token rules are applied on later normalization passes so names like release groups, streaming tags, and team names can be removed consistently.
 

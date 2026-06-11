@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, patch
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.repositories.app_settings_repository import AppSettingsRepository
-from backend.app.schemas.settings import AppSettingsUpdate
+from backend.app.schemas.settings import AppSettingsUpdate, CloudModelsRequest
 from backend.app.services.settings_service import SettingsService
+from backend.app.services.recognition_clients import sanitize_error_text
 
 
 async def test_get_default_settings_returns_unconfigured_state(db_session: AsyncSession) -> None:
@@ -149,6 +150,109 @@ async def test_update_settings_replaces_tmdb_key_when_non_empty(db_session: Asyn
     settings = await repo.get_or_create()
     await db_session.refresh(settings)
     assert settings.tmdb_api_key == "new-key"
+
+
+async def test_placeholder_cloud_key_is_not_saved(db_session: AsyncSession) -> None:
+    repo = AppSettingsRepository(db_session)
+
+    await repo.update({"cloud_ai_api_key": "MediaOrganizer_API_Key"})
+    await db_session.commit()
+    settings = await repo.get_or_create()
+
+    assert settings.cloud_ai_api_key is None
+
+
+async def test_empty_cloud_key_does_not_overwrite_saved_key(db_session: AsyncSession) -> None:
+    repo = AppSettingsRepository(db_session)
+    await repo.update({"cloud_ai_api_key": "saved-cloud-key"})
+    await db_session.commit()
+
+    await repo.update({"cloud_ai_api_key": ""})
+    await db_session.commit()
+    settings = await repo.get_or_create()
+
+    assert settings.cloud_ai_api_key == "saved-cloud-key"
+
+
+async def test_get_settings_does_not_expose_cloud_key(db_session: AsyncSession) -> None:
+    await AppSettingsRepository(db_session).update(
+        {"cloud_ai_provider": "gemini", "cloud_ai_api_key": "saved-cloud-key"}
+    )
+    await db_session.commit()
+
+    result = await SettingsService(db_session).get_settings()
+
+    assert result.cloud_ai_configured is True
+    assert not hasattr(result, "cloud_ai_api_key")
+
+
+async def test_cloud_model_discovery_gemini_success(db_session: AsyncSession, monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"models": [{"name": "models/gemini-test", "displayName": "Gemini Test", "supportedGenerationMethods": ["generateContent"]}]}
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    result = await SettingsService(db_session).get_cloud_models(
+        payload=CloudModelsRequest(provider="gemini", api_key="real-key")
+    )
+
+    assert result.success is True
+    assert result.models[0].id == "gemini-test"
+
+
+async def test_cloud_model_discovery_openai_invalid_key(db_session: AsyncSession, monkeypatch) -> None:
+    class FakeResponse:
+        status_code = 401
+
+        def raise_for_status(self):
+            return None
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    result = await SettingsService(db_session).get_cloud_models(payload=CloudModelsRequest(provider="openai", api_key="bad-key"))
+
+    assert result.success is False
+    assert "rejected" in (result.message or "")
+
+
+def test_sanitize_error_text_redacts_key_query_param() -> None:
+    raw = "Client error '400 Bad Request' for url 'https://example.test/path?key=MediaOrganizer_API_Key&x=1'"
+
+    sanitized = sanitize_error_text(raw)
+
+    assert "MediaOrganizer_API_Key" not in sanitized
+    assert "key=[redacted]" in sanitized
 
 
 # ── TMDB test endpoint error message tests ─────────────────────────────────

@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import {
+  getCloudAiModels,
   getLmStudioModels,
   getOllamaModels,
   getSettings,
   testAiConnection,
+  testCloudAi,
   testTmdbConnection,
   updateSettings,
 } from "../api";
@@ -12,6 +14,7 @@ import type { AppSettingsRead } from "../types";
 import { FolderPickerModal } from "./FolderPickerModal";
 
 type AiProvider = "none" | "gemini" | "ollama" | "lmstudio" | "custom";
+type CloudAiProvider = "none" | "gemini" | "openai" | "custom";
 
 interface WizardData {
   tmdbKey: string;
@@ -19,8 +22,9 @@ interface WizardData {
   aiApiKey: string;
   aiBaseUrl: string;
   aiModel: string;
-  cloudAiProvider: "none" | "gemini";
+  cloudAiProvider: CloudAiProvider;
   cloudAiApiKey: string;
+  cloudAiBaseUrl: string;
   cloudAiModel: string;
   recognitionAiEnabled: boolean;
   sourcePath: string;
@@ -77,6 +81,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     aiModel: "",
     cloudAiProvider: "gemini",
     cloudAiApiKey: "",
+    cloudAiBaseUrl: "",
     cloudAiModel: "gemini-2.0-flash",
     recognitionAiEnabled: true,
     sourcePath: "",
@@ -94,7 +99,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
           aiProvider: (s.ai_provider as AiProvider | null) ?? "none",
           aiBaseUrl: s.ai_base_url ?? "",
           aiModel: s.ai_model ?? "",
-          cloudAiProvider: (s.cloud_ai_provider as "none" | "gemini" | null) ?? "gemini",
+          cloudAiProvider: (s.cloud_ai_provider as CloudAiProvider | null) ?? "gemini",
+          cloudAiBaseUrl: s.cloud_ai_base_url ?? "",
           cloudAiModel: s.cloud_ai_model ?? "gemini-2.0-flash",
           recognitionAiEnabled: s.recognition_ai_enabled,
           sourcePath: prev.sourcePath || s.default_source_path || "",
@@ -116,6 +122,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [aiTesting, setAiTesting] = useState(false);
   const [aiModels, setAiModels] = useState<string[]>([]);
   const [aiSearching, setAiSearching] = useState(false);
+  const [cloudModels, setCloudModels] = useState<string[]>([]);
+  const [cloudSearching, setCloudSearching] = useState(false);
 
   const [pickerOpen, setPickerOpen] = useState<"source" | "target" | null>(null);
   const [saving, setSaving] = useState(false);
@@ -174,6 +182,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       ai_base_url: data.aiBaseUrl || null,
       ai_model: data.aiModel || null,
       cloud_ai_provider: data.cloudAiProvider,
+      cloud_ai_base_url: data.cloudAiBaseUrl || null,
       cloud_ai_model: data.cloudAiModel || null,
       recognition_ai_enabled: data.recognitionAiEnabled,
     };
@@ -185,6 +194,50 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       setAiTestResult(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Неизвестная ошибка при проверке AI";
+      setAiTestResult({ success: false, message: msg });
+    } finally {
+      setAiTesting(false);
+    }
+  }
+
+  async function handleSearchCloudModels() {
+    setCloudSearching(true);
+    setCloudModels([]);
+    setAiTestResult(null);
+    try {
+      const result = await getCloudAiModels({
+        provider: data.cloudAiProvider,
+        api_key: data.cloudAiApiKey || null,
+        base_url: data.cloudAiBaseUrl || null,
+      });
+      setCloudModels(result.models.map((model) => model.id));
+      if (!result.success) {
+        setAiTestResult({ success: false, message: result.message ?? "Cloud models could not be loaded" });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Cloud models could not be loaded";
+      setAiTestResult({ success: false, message: msg });
+    } finally {
+      setCloudSearching(false);
+    }
+  }
+
+  async function handleTestCloudAi() {
+    setAiTesting(true);
+    setAiTestResult(null);
+    try {
+      const result = await testCloudAi({
+        provider: data.cloudAiProvider,
+        model: data.cloudAiModel,
+        api_key: data.cloudAiApiKey || null,
+        base_url: data.cloudAiBaseUrl || null,
+      });
+      setAiTestResult({
+        success: result.ok,
+        message: result.ok ? `Cloud AI connected in ${result.duration_ms} ms` : (result.error ?? "Cloud AI test failed"),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Cloud AI test failed";
       setAiTestResult({ success: false, message: msg });
     } finally {
       setAiTesting(false);
@@ -206,6 +259,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         ai_base_url: data.aiBaseUrl || null,
         ai_model: data.aiModel || null,
         cloud_ai_provider: data.cloudAiProvider,
+        cloud_ai_base_url: data.cloudAiBaseUrl || null,
         cloud_ai_model: data.cloudAiModel || null,
         recognition_ai_enabled: data.recognitionAiEnabled,
         default_source_path: data.sourcePath || null,
@@ -466,31 +520,71 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                     Cloud fallback
                     <select
                       value={data.cloudAiProvider}
-                      onChange={(e) => update({ cloudAiProvider: e.target.value as "none" | "gemini" })}
+                      onChange={(e) => {
+                        update({ cloudAiProvider: e.target.value as CloudAiProvider, cloudAiModel: "", cloudAiBaseUrl: "" });
+                        setCloudModels([]);
+                      }}
                     >
+                      <option value="none">Disabled</option>
                       <option value="gemini">Gemini</option>
-                      <option value="none">None</option>
+                      <option value="openai">OpenAI / ChatGPT</option>
+                      <option value="custom">Custom OpenAI-compatible</option>
                     </select>
                   </label>
-                  {data.cloudAiProvider === "gemini" ? (
+                  {data.cloudAiProvider !== "none" ? (
                     <>
                       <label>
-                        Gemini API key
+                        Cloud API key
                         <input
                           type="password"
                           value={data.cloudAiApiKey}
                           onChange={(e) => update({ cloudAiApiKey: e.target.value })}
-                          placeholder="Leave empty to keep saved key"
+                          placeholder="Paste API key"
                         />
+                        {savedSettings?.cloud_ai_configured ? (
+                          <small className="muted">Key saved. Leave empty to keep it unchanged.</small>
+                        ) : null}
                       </label>
-                      <label>
-                        Gemini model
-                        <input
-                          value={data.cloudAiModel}
-                          onChange={(e) => update({ cloudAiModel: e.target.value })}
-                          placeholder="gemini-2.0-flash"
-                        />
-                      </label>
+                      {data.cloudAiProvider === "custom" ? (
+                        <label>
+                          Cloud base URL
+                          <input
+                            value={data.cloudAiBaseUrl}
+                            onChange={(e) => update({ cloudAiBaseUrl: e.target.value })}
+                            placeholder="https://api.example.com"
+                          />
+                        </label>
+                      ) : null}
+                      <div className="form-actions">
+                        <button type="button" disabled={cloudSearching} onClick={() => void handleSearchCloudModels()}>
+                          {cloudSearching ? "Searching..." : "Find cloud models"}
+                        </button>
+                      </div>
+                      {cloudModels.length > 0 ? (
+                        <label>
+                          Cloud model
+                          <select value={data.cloudAiModel} onChange={(e) => update({ cloudAiModel: e.target.value })}>
+                            <option value="">-- select model --</option>
+                            {cloudModels.map((m) => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : data.cloudAiProvider === "custom" ? (
+                        <label>
+                          Cloud model
+                          <input
+                            value={data.cloudAiModel}
+                            onChange={(e) => update({ cloudAiModel: e.target.value })}
+                            placeholder="model id"
+                          />
+                        </label>
+                      ) : null}
+                      <div className="form-actions">
+                        <button type="button" disabled={aiTesting || !data.cloudAiModel} onClick={() => void handleTestCloudAi()}>
+                          {aiTesting ? "Testing..." : "Test cloud connection"}
+                        </button>
+                      </div>
                     </>
                   ) : null}
                 </>

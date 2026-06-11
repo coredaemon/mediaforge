@@ -2,11 +2,23 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..repositories.app_settings_repository import AppSettingsRepository
-from ..schemas.settings import AppSettingsRead, AppSettingsUpdate, LocalModelsResult, TestConnectionResult
+from ..schemas.settings import (
+    AppSettingsRead,
+    AppSettingsUpdate,
+    CloudAiTestRequest,
+    CloudModelRead,
+    CloudModelsRequest,
+    CloudModelsResult,
+    LocalModelsResult,
+    TestConnectionResult,
+)
+from ..schemas.recognition import LlmPreflightCheck
+from .recognition_clients import GeminiTitleNormalizer, OpenAICompatibleTitleNormalizer, sanitize_error_text
 from .tmdb_client import TmdbClient
 
 _TMDB_TEST_TIMEOUT = 8.0
 _LOCAL_AI_TIMEOUT = 5.0
+_CLOUD_AI_TIMEOUT = 20.0
 
 
 class SettingsService:
@@ -23,8 +35,11 @@ class SettingsService:
             ai_provider=s.ai_provider,
             ai_base_url=s.ai_base_url,
             ai_model=s.ai_model,
-            cloud_ai_configured=bool(s.cloud_ai_provider and s.cloud_ai_provider != "none" and s.cloud_ai_api_key),
+            cloud_ai_configured=bool(
+                s.cloud_ai_provider and s.cloud_ai_provider != "none" and _usable_secret(s.cloud_ai_api_key)
+            ),
             cloud_ai_provider=s.cloud_ai_provider,
+            cloud_ai_base_url=s.cloud_ai_base_url,
             cloud_ai_model=s.cloud_ai_model,
             recognition_ai_enabled=s.recognition_ai_enabled,
             default_source_path=s.default_source_path,
@@ -41,6 +56,8 @@ class SettingsService:
             data["ai_provider"] = payload.ai_provider
         if payload.cloud_ai_provider is not None:
             data["cloud_ai_provider"] = payload.cloud_ai_provider
+        if payload.cloud_ai_api_key is not None and not _usable_secret(payload.cloud_ai_api_key):
+            data.pop("cloud_ai_api_key", None)
         if payload.recognition_ai_enabled is not None:
             data["recognition_ai_enabled"] = payload.recognition_ai_enabled
         await self.repo.update(data)
@@ -125,6 +142,69 @@ class SettingsService:
         except Exception as exc:
             return LocalModelsResult(success=False, models=[], message=str(exc))
 
+    async def get_cloud_models(self, payload: CloudModelsRequest) -> CloudModelsResult:
+        provider = payload.provider
+        if provider == "gemini":
+            key = payload.api_key if _usable_secret(payload.api_key) else (await self.repo.get_or_create()).cloud_ai_api_key
+            if not _usable_secret(key):
+                return CloudModelsResult(success=False, models=[], message="Gemini API key is not configured.")
+            return await _get_gemini_models(key)
+        if provider in {"openai", "custom"}:
+            settings = await self.repo.get_or_create()
+            key = payload.api_key if _usable_secret(payload.api_key) else settings.cloud_ai_api_key
+            base_url = payload.base_url or settings.cloud_ai_base_url or "https://api.openai.com"
+            if provider == "openai" and not _usable_secret(key):
+                return CloudModelsResult(success=False, models=[], message="OpenAI API key is not configured.")
+            return await _get_openai_models(base_url, key)
+        return CloudModelsResult(success=False, models=[], message=f"Unsupported cloud provider: {provider}")
+
+    async def test_cloud_ai(self, payload: CloudAiTestRequest):
+        settings = await self.repo.get_or_create()
+        provider = payload.provider
+        model = payload.model or settings.cloud_ai_model
+        key = payload.api_key if _usable_secret(payload.api_key) else settings.cloud_ai_api_key
+        base_url = payload.base_url or settings.cloud_ai_base_url
+        if provider == "gemini":
+            if not _usable_secret(key):
+                return LlmPreflightCheck(
+                    ok=False,
+                    provider="gemini",
+                    model=model,
+                    error="Gemini API key is not configured.",
+                    error_type="not_configured",
+                )
+            if not model:
+                return LlmPreflightCheck(
+                    ok=False,
+                    provider="gemini",
+                    error="Gemini model is not selected.",
+                    error_type="not_configured",
+                )
+            return await GeminiTitleNormalizer(key, model).preflight("gemini")
+        if provider in {"openai", "custom"}:
+            if provider == "openai" and not _usable_secret(key):
+                return LlmPreflightCheck(
+                    ok=False,
+                    provider="openai",
+                    model=model,
+                    error="OpenAI API key is not configured.",
+                    error_type="not_configured",
+                )
+            if not model:
+                return LlmPreflightCheck(
+                    ok=False,
+                    provider=provider,
+                    error="Cloud AI model is not selected.",
+                    error_type="not_configured",
+                )
+            return await OpenAICompatibleTitleNormalizer(base_url or "https://api.openai.com", model, key).preflight("local")
+        return LlmPreflightCheck(
+            ok=False,
+            provider=provider,
+            error=f"Unsupported cloud provider: {provider}",
+            error_type="unsupported_provider",
+        )
+
 
 def _default_endpoint(provider: str) -> str:
     return "http://127.0.0.1:11434" if provider == "ollama" else "http://127.0.0.1:1234"
@@ -156,3 +236,58 @@ async def _test_openai_compatible(base_url: str, api_key: str | None = None) -> 
         return TestConnectionResult(success=False, message=f"AI-сервис не отвечает по адресу {base_url}")
     except Exception as exc:
         return TestConnectionResult(success=False, message=str(exc))
+
+
+async def _get_gemini_models(api_key: str) -> CloudModelsResult:
+    try:
+        async with httpx.AsyncClient(timeout=_CLOUD_AI_TIMEOUT) as client:
+            response = await client.get("https://generativelanguage.googleapis.com/v1beta/models", params={"key": api_key})
+            if response.status_code in {400, 401, 403}:
+                return CloudModelsResult(success=False, models=[], message="Gemini API key rejected. Check key and permissions.")
+            response.raise_for_status()
+            models = []
+            for model in response.json().get("models", []):
+                methods = model.get("supportedGenerationMethods") or []
+                name = str(model.get("name", "")).removeprefix("models/")
+                if "generateContent" not in methods or not name:
+                    continue
+                models.append(
+                    CloudModelRead(
+                        id=name,
+                        label=name,
+                        display_name=model.get("displayName"),
+                        description=model.get("description"),
+                        supported_generation_methods=methods,
+                    )
+                )
+            return CloudModelsResult(success=True, models=models)
+    except httpx.ConnectError:
+        return CloudModelsResult(success=False, models=[], message="Could not connect to Gemini models API.")
+    except Exception as exc:
+        return CloudModelsResult(success=False, models=[], message=sanitize_error_text(str(exc)))
+
+
+async def _get_openai_models(base_url: str, api_key: str | None) -> CloudModelsResult:
+    headers = {"Authorization": f"Bearer {api_key}"} if _usable_secret(api_key) else {}
+    try:
+        async with httpx.AsyncClient(timeout=_CLOUD_AI_TIMEOUT) as client:
+            response = await client.get(f"{base_url.rstrip('/')}/v1/models", headers=headers)
+            if response.status_code in {400, 401, 403}:
+                return CloudModelsResult(success=False, models=[], message="OpenAI API key rejected. Check key and permissions.")
+            response.raise_for_status()
+            models = [
+                CloudModelRead(id=item["id"], label=item["id"])
+                for item in response.json().get("data", [])
+                if isinstance(item, dict) and item.get("id")
+            ]
+            return CloudModelsResult(success=True, models=models)
+    except httpx.ConnectError:
+        return CloudModelsResult(success=False, models=[], message=f"Could not connect to cloud AI endpoint {base_url}.")
+    except Exception as exc:
+        return CloudModelsResult(success=False, models=[], message=sanitize_error_text(str(exc)))
+
+
+def _usable_secret(value: str | None) -> bool:
+    if not value or not value.strip():
+        return False
+    return value.strip() not in {"MediaOrganizer_API_Key", "YOUR_API_KEY", "PASTE_API_KEY_HERE"}

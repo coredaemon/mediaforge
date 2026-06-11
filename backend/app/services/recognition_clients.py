@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -217,9 +218,15 @@ def _failed_preflight(
         endpoint=endpoint,
         duration_ms=_duration_ms(started),
         response_valid_json=False,
-        error=str(exc),
+        error=sanitize_error_text(str(exc)),
         error_type=exc.__class__.__name__,
     )
+
+
+def sanitize_error_text(value: str) -> str:
+    value = re.sub(r"([?&]key=)[^&\\s']+", r"\1[redacted]", value)
+    value = re.sub(r"(Bearer\\s+)[A-Za-z0-9._-]+", r"\1[redacted]", value, flags=re.IGNORECASE)
+    return value
 
 
 @dataclass

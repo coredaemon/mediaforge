@@ -13,6 +13,7 @@ class AppSettingsRead(BaseModel):
     ai_model: str | None
     cloud_ai_configured: bool
     cloud_ai_provider: str | None
+    cloud_ai_base_url: str | None
     cloud_ai_model: str | None
     recognition_ai_enabled: bool
     default_source_path: str | None
@@ -31,6 +32,7 @@ class AppSettingsUpdate(BaseModel):
     ai_model: str | None = None
     cloud_ai_provider: str | None = None
     cloud_ai_api_key: str | None = None
+    cloud_ai_base_url: str | None = None
     cloud_ai_model: str | None = None
     recognition_ai_enabled: bool | None = None
     default_source_path: str | None = None
@@ -47,6 +49,33 @@ class LocalModelsResult(BaseModel):
     success: bool
     models: list[str]
     message: str | None = None
+
+
+class CloudModelRead(BaseModel):
+    id: str
+    label: str
+    display_name: str | None = None
+    description: str | None = None
+    supported_generation_methods: list[str] = []
+
+
+class CloudModelsRequest(BaseModel):
+    provider: str
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+class CloudModelsResult(BaseModel):
+    success: bool
+    models: list[CloudModelRead]
+    message: str | None = None
+
+
+class CloudAiTestRequest(BaseModel):
+    provider: str
+    model: str
+    api_key: str | None = None
+    base_url: str | None = None
 
 
 class DirectoryEntry(BaseModel):

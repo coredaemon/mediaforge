@@ -122,13 +122,7 @@ class RecognitionService:
         cloud = (
             await cloud_client.preflight("gemini")
             if cloud_client
-            else LlmPreflightCheck(
-                ok=False,
-                provider=settings.cloud_ai_provider or "none",
-                model=settings.cloud_ai_model,
-                error="Gemini cloud fallback is not configured.",
-                error_type="not_configured",
-            )
+            else _missing_cloud_preflight(settings.cloud_ai_provider, settings.cloud_ai_model, settings.cloud_ai_api_key)
         )
         return RecognitionPreflightResult(ok=local.ok and cloud.ok, local=local, cloud=cloud)
 
@@ -209,8 +203,14 @@ class RecognitionService:
         if use_gemini:
             if self.gemini_client is not None:
                 return self.gemini_client
-            if settings.cloud_ai_provider == "gemini" and settings.cloud_ai_api_key:
+            if settings.cloud_ai_provider == "gemini" and _usable_secret(settings.cloud_ai_api_key) and settings.cloud_ai_model:
                 return GeminiTitleNormalizer(settings.cloud_ai_api_key, settings.cloud_ai_model)
+            if settings.cloud_ai_provider in {"openai", "custom"} and settings.cloud_ai_model:
+                return OpenAICompatibleTitleNormalizer(
+                    settings.cloud_ai_base_url or "https://api.openai.com",
+                    settings.cloud_ai_model,
+                    settings.cloud_ai_api_key if _usable_secret(settings.cloud_ai_api_key) else None,
+                )
             return None
         if self.local_client is not None:
             return self.local_client
@@ -320,3 +320,42 @@ class MediaItemNotFoundError(LookupError):
 
 def _duration_ms(started: float) -> int:
     return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def _missing_cloud_preflight(provider: str | None, model: str | None, key: str | None) -> LlmPreflightCheck:
+    if provider in {None, "none"}:
+        return LlmPreflightCheck(
+            ok=False,
+            provider=provider or "none",
+            model=model,
+            error="Cloud AI provider is not configured.",
+            error_type="not_configured",
+        )
+    if provider == "gemini" and not _usable_secret(key):
+        return LlmPreflightCheck(
+            ok=False,
+            provider="gemini",
+            model=model,
+            error="Gemini API key is not configured.",
+            error_type="not_configured",
+        )
+    if not model:
+        return LlmPreflightCheck(
+            ok=False,
+            provider=provider,
+            error="Cloud AI model is not selected.",
+            error_type="not_configured",
+        )
+    return LlmPreflightCheck(
+        ok=False,
+        provider=provider,
+        model=model,
+        error="Cloud AI client is not configured.",
+        error_type="not_configured",
+    )
+
+
+def _usable_secret(value: str | None) -> bool:
+    if not value or not value.strip():
+        return False
+    return value.strip() not in {"MediaOrganizer_API_Key", "YOUR_API_KEY", "PASTE_API_KEY_HERE"}

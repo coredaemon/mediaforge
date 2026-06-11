@@ -6,6 +6,7 @@ _SINGLETON_ID = 1
 
 # Fields that hold secrets: empty string or None must never overwrite an existing value.
 _SECRET_FIELDS = frozenset({"tmdb_api_key", "ai_api_key", "cloud_ai_api_key"})
+_PLACEHOLDER_SECRETS = frozenset({"MediaOrganizer_API_Key", "YOUR_API_KEY", "PASTE_API_KEY_HERE"})
 
 
 class AppSettingsRepository:
@@ -28,6 +29,8 @@ class AppSettingsRepository:
                 continue
             # For secret fields skip None and empty string — never wipe a saved key.
             if field in _SECRET_FIELDS and not value:
+                continue
+            if field in _SECRET_FIELDS and isinstance(value, str) and value.strip() in _PLACEHOLDER_SECRETS:
                 continue
             if value is None:
                 continue

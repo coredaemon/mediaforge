@@ -17,6 +17,7 @@ class AppSettings(Base):
     ai_model: Mapped[str | None] = mapped_column(String(256))
     cloud_ai_provider: Mapped[str | None] = mapped_column(String(64))
     cloud_ai_api_key: Mapped[str | None] = mapped_column(Text)
+    cloud_ai_base_url: Mapped[str | None] = mapped_column(Text)
     cloud_ai_model: Mapped[str | None] = mapped_column(String(256))
     recognition_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     default_source_path: Mapped[str | None] = mapped_column(Text)
