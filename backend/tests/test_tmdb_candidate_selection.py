@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.models.enums import MediaItemStatus, MediaType
+from backend.app.models.enums import MediaItemStatus, MediaType, ReviewDecision
 from backend.app.models.media_item import MediaItem
 from backend.app.models.tmdb_match_candidate import TmdbMatchCandidate
 from backend.app.repositories.media_item_repository import MediaItemRepository
@@ -72,6 +72,7 @@ async def test_select_candidate_updates_media_item(db_session: AsyncSession, tmp
     assert refreshed.match_confidence == second.score
     assert refreshed.status == MediaItemStatus.MATCHED
     assert not refreshed.needs_review
+    assert refreshed.review_decision == ReviewDecision.MANUAL_OVERRIDE
 
 
 async def test_select_candidate_clears_previous_selected_candidate(db_session: AsyncSession, tmp_path) -> None:

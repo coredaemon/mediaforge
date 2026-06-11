@@ -26,6 +26,9 @@ interface WizardData {
   cloudAiApiKey: string;
   cloudAiBaseUrl: string;
   cloudAiModel: string;
+  cloudAiFallbackProvider: CloudAiProvider;
+  cloudAiFallbackApiKey: string;
+  cloudAiFallbackModel: string;
   recognitionAiEnabled: boolean;
   sourcePath: string;
   targetPath: string;
@@ -83,6 +86,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     cloudAiApiKey: "",
     cloudAiBaseUrl: "",
     cloudAiModel: "gemini-2.0-flash",
+    cloudAiFallbackProvider: "none",
+    cloudAiFallbackApiKey: "",
+    cloudAiFallbackModel: "",
     recognitionAiEnabled: true,
     sourcePath: "",
     targetPath: "",
@@ -102,6 +108,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
           cloudAiProvider: (s.cloud_ai_provider as CloudAiProvider | null) ?? "gemini",
           cloudAiBaseUrl: s.cloud_ai_base_url ?? "",
           cloudAiModel: s.cloud_ai_model ?? "gemini-2.0-flash",
+          cloudAiFallbackProvider: (s.cloud_ai_fallback_provider as CloudAiProvider | null) ?? "none",
+          cloudAiFallbackModel: s.cloud_ai_fallback_model ?? "",
           recognitionAiEnabled: s.recognition_ai_enabled,
           sourcePath: prev.sourcePath || s.default_source_path || "",
           targetPath: prev.targetPath || s.default_target_path || "",
@@ -123,7 +131,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [aiModels, setAiModels] = useState<string[]>([]);
   const [aiSearching, setAiSearching] = useState(false);
   const [cloudModels, setCloudModels] = useState<string[]>([]);
+  const [cloudFallbackModels, setCloudFallbackModels] = useState<string[]>([]);
   const [cloudSearching, setCloudSearching] = useState(false);
+  const [cloudFallbackSearching, setCloudFallbackSearching] = useState(false);
 
   const [pickerOpen, setPickerOpen] = useState<"source" | "target" | null>(null);
   const [saving, setSaving] = useState(false);
@@ -184,10 +194,13 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       cloud_ai_provider: data.cloudAiProvider,
       cloud_ai_base_url: data.cloudAiBaseUrl || null,
       cloud_ai_model: data.cloudAiModel || null,
+      cloud_ai_fallback_provider: data.cloudAiFallbackProvider,
+      cloud_ai_fallback_model: data.cloudAiFallbackModel || null,
       recognition_ai_enabled: data.recognitionAiEnabled,
     };
     if (data.aiApiKey) aiPayload.ai_api_key = data.aiApiKey;
     if (data.cloudAiApiKey) aiPayload.cloud_ai_api_key = data.cloudAiApiKey;
+    if (data.cloudAiFallbackApiKey) aiPayload.cloud_ai_fallback_api_key = data.cloudAiFallbackApiKey;
     await updateSettings(aiPayload);
     try {
       const result = await testAiConnection();
@@ -197,6 +210,27 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       setAiTestResult({ success: false, message: msg });
     } finally {
       setAiTesting(false);
+    }
+  }
+
+  async function handleSearchCloudFallbackModels() {
+    setCloudFallbackSearching(true);
+    setCloudFallbackModels([]);
+    try {
+      const result = await getCloudAiModels({
+        provider: data.cloudAiFallbackProvider,
+        api_key: data.cloudAiFallbackApiKey || data.cloudAiApiKey || null,
+        base_url: data.cloudAiBaseUrl || null,
+      });
+      setCloudFallbackModels(result.models.map((model) => model.id));
+      if (!result.success) {
+        setAiTestResult({ success: false, message: result.message ?? "Fallback models could not be loaded" });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Fallback models could not be loaded";
+      setAiTestResult({ success: false, message: msg });
+    } finally {
+      setCloudFallbackSearching(false);
     }
   }
 
@@ -244,6 +278,28 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     }
   }
 
+  async function handleTestCloudFallbackAi() {
+    setAiTesting(true);
+    setAiTestResult(null);
+    try {
+      const result = await testCloudAi({
+        provider: data.cloudAiFallbackProvider,
+        model: data.cloudAiFallbackModel,
+        api_key: data.cloudAiFallbackApiKey || data.cloudAiApiKey || null,
+        base_url: data.cloudAiBaseUrl || null,
+      });
+      setAiTestResult({
+        success: result.ok,
+        message: result.ok ? `Fallback cloud connected in ${result.duration_ms} ms` : (result.error ?? "Fallback test failed"),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Fallback test failed";
+      setAiTestResult({ success: false, message: msg });
+    } finally {
+      setAiTesting(false);
+    }
+  }
+
   async function handleSave() {
     if (foldersConflict) {
       setSaveError(folderConflictMsg ?? "Проверьте папки.");
@@ -261,6 +317,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         cloud_ai_provider: data.cloudAiProvider,
         cloud_ai_base_url: data.cloudAiBaseUrl || null,
         cloud_ai_model: data.cloudAiModel || null,
+        cloud_ai_fallback_provider: data.cloudAiFallbackProvider,
+        cloud_ai_fallback_model: data.cloudAiFallbackModel || null,
         recognition_ai_enabled: data.recognitionAiEnabled,
         default_source_path: data.sourcePath || null,
         default_target_path: data.targetPath || null,
@@ -269,6 +327,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       if (data.tmdbKey) payload.tmdb_api_key = data.tmdbKey;
       if (data.aiApiKey) payload.ai_api_key = data.aiApiKey;
       if (data.cloudAiApiKey) payload.cloud_ai_api_key = data.cloudAiApiKey;
+      if (data.cloudAiFallbackApiKey) payload.cloud_ai_fallback_api_key = data.cloudAiFallbackApiKey;
       await updateSettings(payload);
       onComplete();
     } catch (err) {
@@ -516,8 +575,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
 
               {data.recognitionAiEnabled ? (
                 <>
+                  <h4>Cloud AI primary</h4>
                   <label>
-                    Cloud fallback
+                    Primary provider
                     <select
                       value={data.cloudAiProvider}
                       onChange={(e) => {
@@ -534,15 +594,15 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   {data.cloudAiProvider !== "none" ? (
                     <>
                       <label>
-                        Cloud API key
+                        Primary API key
                         <input
                           type="password"
                           value={data.cloudAiApiKey}
                           onChange={(e) => update({ cloudAiApiKey: e.target.value })}
                           placeholder="Paste API key"
                         />
-                        {savedSettings?.cloud_ai_configured ? (
-                          <small className="muted">Key saved. Leave empty to keep it unchanged.</small>
+                        {savedSettings?.cloud_primary_configured ? (
+                          <small className="muted">Ключ сохранён. Оставьте поле пустым, чтобы не менять.</small>
                         ) : null}
                       </label>
                       {data.cloudAiProvider === "custom" ? (
@@ -582,7 +642,78 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       ) : null}
                       <div className="form-actions">
                         <button type="button" disabled={aiTesting || !data.cloudAiModel} onClick={() => void handleTestCloudAi()}>
-                          {aiTesting ? "Testing..." : "Test cloud connection"}
+                          {aiTesting ? "Testing..." : "Test primary cloud"}
+                        </button>
+                      </div>
+                    </>
+                  ) : null}
+
+                  <h4>Cloud AI fallback</h4>
+                  <label>
+                    Fallback provider
+                    <select
+                      value={data.cloudAiFallbackProvider}
+                      onChange={(e) => {
+                        update({ cloudAiFallbackProvider: e.target.value as CloudAiProvider, cloudAiFallbackModel: "" });
+                        setCloudFallbackModels([]);
+                      }}
+                    >
+                      <option value="none">Disabled</option>
+                      <option value="gemini">Gemini</option>
+                      <option value="openai">OpenAI / ChatGPT</option>
+                      <option value="custom">Custom OpenAI-compatible</option>
+                    </select>
+                  </label>
+                  {data.cloudAiFallbackProvider !== "none" ? (
+                    <>
+                      <label>
+                        Fallback API key
+                        <input
+                          type="password"
+                          value={data.cloudAiFallbackApiKey}
+                          onChange={(e) => update({ cloudAiFallbackApiKey: e.target.value })}
+                          placeholder="Paste fallback API key"
+                        />
+                        {savedSettings?.cloud_fallback_configured ? (
+                          <small className="muted">Ключ сохранён. Оставьте поле пустым, чтобы не менять.</small>
+                        ) : (
+                          <small className="muted">
+                            Если ключ запасной модели не указан, будет использован ключ основной модели для того же провайдера.
+                          </small>
+                        )}
+                      </label>
+                      <div className="form-actions">
+                        <button type="button" disabled={cloudFallbackSearching} onClick={() => void handleSearchCloudFallbackModels()}>
+                          {cloudFallbackSearching ? "Searching..." : "Find fallback models"}
+                        </button>
+                      </div>
+                      {cloudFallbackModels.length > 0 ? (
+                        <label>
+                          Fallback model
+                          <select value={data.cloudAiFallbackModel} onChange={(e) => update({ cloudAiFallbackModel: e.target.value })}>
+                            <option value="">-- select model --</option>
+                            {cloudFallbackModels.map((m) => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : (
+                        <label>
+                          Fallback model
+                          <input
+                            value={data.cloudAiFallbackModel}
+                            onChange={(e) => update({ cloudAiFallbackModel: e.target.value })}
+                            placeholder="model id"
+                          />
+                        </label>
+                      )}
+                      <div className="form-actions">
+                        <button
+                          type="button"
+                          disabled={aiTesting || !data.cloudAiFallbackModel}
+                          onClick={() => void handleTestCloudFallbackAi()}
+                        >
+                          {aiTesting ? "Testing..." : "Test fallback cloud"}
                         </button>
                       </div>
                     </>

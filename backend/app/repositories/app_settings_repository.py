@@ -5,7 +5,7 @@ from ..models.app_settings import AppSettings
 _SINGLETON_ID = 1
 
 # Fields that hold secrets: empty string or None must never overwrite an existing value.
-_SECRET_FIELDS = frozenset({"tmdb_api_key", "ai_api_key", "cloud_ai_api_key"})
+_SECRET_FIELDS = frozenset({"tmdb_api_key", "ai_api_key", "cloud_ai_api_key", "cloud_ai_fallback_api_key"})
 _PLACEHOLDER_SECRETS = frozenset({"MediaOrganizer_API_Key", "YOUR_API_KEY", "PASTE_API_KEY_HERE"})
 
 

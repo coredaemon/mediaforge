@@ -89,6 +89,15 @@ export interface MediaItem {
   gemini_model: string | null;
   confidence: number | null;
   needs_review: boolean;
+  review_decision: string;
+  reviewed_at: string | null;
+  review_note: string | null;
+  manual_title: string | null;
+  manual_year: number | null;
+  manual_tmdb_id: number | null;
+  manual_imdb_id: string | null;
+  manual_tvdb_id: number | null;
+  manual_media_type: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -183,9 +192,13 @@ export interface AppSettingsRead {
   ai_base_url: string | null;
   ai_model: string | null;
   cloud_ai_configured: boolean;
+  cloud_primary_configured: boolean;
+  cloud_fallback_configured: boolean;
   cloud_ai_provider: string | null;
   cloud_ai_base_url: string | null;
   cloud_ai_model: string | null;
+  cloud_ai_fallback_provider: string | null;
+  cloud_ai_fallback_model: string | null;
   recognition_ai_enabled: boolean;
   default_source_path: string | null;
   default_target_path: string | null;
@@ -203,6 +216,9 @@ export interface AppSettingsUpdate {
   cloud_ai_api_key?: string | null;
   cloud_ai_base_url?: string | null;
   cloud_ai_model?: string | null;
+  cloud_ai_fallback_provider?: string | null;
+  cloud_ai_fallback_api_key?: string | null;
+  cloud_ai_fallback_model?: string | null;
   recognition_ai_enabled?: boolean | null;
   default_source_path?: string | null;
   default_target_path?: string | null;
@@ -265,6 +281,33 @@ export interface RecognitionPreflightResult {
   ok: boolean;
   local: LlmPreflightCheck;
   cloud: LlmPreflightCheck;
+  cloud_fallback?: LlmPreflightCheck | null;
+  warning?: string | null;
+}
+
+export interface ReviewDecisionRequest {
+  decision: string;
+  note?: string | null;
+  manual_title?: string | null;
+  manual_year?: number | null;
+  manual_tmdb_id?: number | null;
+  manual_imdb_id?: string | null;
+  manual_tvdb_id?: number | null;
+  manual_media_type?: string | null;
+}
+
+export interface TmdbManualSearchRequest {
+  query: string;
+  year?: number | null;
+  media_type?: string;
+  language?: string;
+}
+
+export interface TmdbManualLookupRequest {
+  tmdb_id?: number | null;
+  imdb_id?: string | null;
+  tvdb_id?: number | null;
+  media_type?: string | null;
 }
 
 export interface CloudModel {

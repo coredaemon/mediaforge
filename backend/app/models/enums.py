@@ -35,6 +35,14 @@ class MediaType(StrEnum):
     EXTRA = "EXTRA"
 
 
+class ReviewDecision(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    IGNORED = "ignored"
+    DEFERRED = "deferred"
+    MANUAL_OVERRIDE = "manual_override"
+
+
 class PlanStatus(StrEnum):
     DRAFT = "DRAFT"
     READY = "READY"

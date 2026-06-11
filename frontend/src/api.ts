@@ -16,9 +16,12 @@ import type {
   RecognitionNormalizeResult,
   RecognitionPreflightResult,
   RecognitionTokenRule,
+  ReviewDecisionRequest,
   ScanSession,
   ScanSessionCreate,
   TestConnectionResult,
+  TmdbManualLookupRequest,
+  TmdbManualSearchRequest,
   TmdbMatchCandidate,
   TmdbMatchResult,
 } from "./types";
@@ -165,6 +168,27 @@ export function listTmdbCandidates(itemId: number): Promise<TmdbMatchCandidate[]
 export function selectTmdbCandidate(itemId: number, candidateId: number): Promise<TmdbMatchCandidate> {
   return request<TmdbMatchCandidate>(`/items/${itemId}/tmdb-candidates/${candidateId}/select`, {
     method: "POST",
+  });
+}
+
+export function manualTmdbSearch(itemId: number, payload: TmdbManualSearchRequest): Promise<TmdbMatchCandidate[]> {
+  return request<TmdbMatchCandidate[]>(`/items/${itemId}/tmdb-search`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function manualTmdbLookup(itemId: number, payload: TmdbManualLookupRequest): Promise<TmdbMatchCandidate> {
+  return request<TmdbMatchCandidate>(`/items/${itemId}/tmdb-lookup`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function applyReviewDecision(itemId: number, payload: ReviewDecisionRequest): Promise<MediaItem> {
+  return request<MediaItem>(`/items/${itemId}/review-decision`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

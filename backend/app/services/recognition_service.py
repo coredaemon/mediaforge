@@ -106,7 +106,8 @@ class RecognitionService:
             return RecognitionPreflightResult(ok=True, local=skipped, cloud=skipped)
 
         local_client = await self._get_client(use_gemini=False)
-        cloud_client = await self._get_client(use_gemini=True)
+        cloud_client = await self._get_client(use_gemini=True, use_fallback=False)
+        fallback_client = await self._get_client(use_gemini=True, use_fallback=True)
         local = (
             await local_client.preflight("local")
             if local_client
@@ -124,7 +125,20 @@ class RecognitionService:
             if cloud_client
             else _missing_cloud_preflight(settings.cloud_ai_provider, settings.cloud_ai_model, settings.cloud_ai_api_key)
         )
-        return RecognitionPreflightResult(ok=local.ok and cloud.ok, local=local, cloud=cloud)
+        cloud_fallback = None
+        if fallback_client is not None:
+            cloud_fallback = await fallback_client.preflight("gemini")
+        warning = None
+        cloud_ok = cloud.ok or (cloud_fallback.ok if cloud_fallback else False)
+        if not cloud.ok and cloud_fallback and cloud_fallback.ok:
+            warning = "Основная облачная модель недоступна, будет использоваться запасная."
+        return RecognitionPreflightResult(
+            ok=local.ok and cloud_ok,
+            local=local,
+            cloud=cloud,
+            cloud_fallback=cloud_fallback,
+            warning=warning,
+        )
 
     async def _normalize_scan_session(self, scan_session_id: int, use_gemini: bool) -> RecognitionNormalizeResult:
         scan_session = await self.scan_sessions.get(scan_session_id)
@@ -133,7 +147,8 @@ class RecognitionService:
         items = list(await self.media_items.list_by_scan_session(scan_session_id))
 
         remove_tokens = await self.memory.list_remove_tokens()
-        client = await self._get_client(use_gemini=use_gemini)
+        client = await self._get_client(use_gemini=use_gemini, use_fallback=False)
+        fallback_client = await self._get_client(use_gemini=use_gemini, use_fallback=True) if use_gemini else None
         normalized_count = 0
         skipped_count = 0
         error_count = 0
@@ -154,7 +169,12 @@ class RecognitionService:
                 continue
             try:
                 rule_title = clean_title(item.parsed_title or item.original_title or "", remove_tokens=remove_tokens) or None
-                if client is None:
+                active_client = client
+                used_fallback = False
+                if active_client is None and fallback_client is not None:
+                    active_client = fallback_client
+                    used_fallback = True
+                if active_client is None:
                     self._mark_ai_diagnostics(
                         item,
                         use_gemini=use_gemini,
@@ -166,9 +186,22 @@ class RecognitionService:
                     )
                     error_count += 1
                     continue
-                parse_result = await client.normalize(item.original_title or "", rule_title, item.year)
+                try:
+                    parse_result = await active_client.normalize(item.original_title or "", rule_title, item.year)
+                except Exception as primary_exc:
+                    if fallback_client is not None and active_client is not fallback_client:
+                        active_client = fallback_client
+                        used_fallback = True
+                        parse_result = await active_client.normalize(item.original_title or "", rule_title, item.year)
+                    else:
+                        raise primary_exc
                 self._apply_suggestion(item, parse_result.title, rule_title=rule_title, use_gemini=use_gemini)
-                warning_text = "; ".join(parse_result.warnings) if parse_result.warnings else None
+                warning_parts: list[str] = []
+                if parse_result.warnings:
+                    warning_parts.extend(parse_result.warnings)
+                if used_fallback:
+                    warning_parts.append("Used fallback cloud model.")
+                warning_text = "; ".join(warning_parts) if warning_parts else None
                 self._mark_ai_diagnostics(
                     item,
                     use_gemini=use_gemini,
@@ -176,7 +209,7 @@ class RecognitionService:
                     duration_ms=_duration_ms(started),
                     error=warning_text,
                     response_valid_json=True,
-                    model=getattr(client, "model", None),
+                    model=getattr(active_client, "model", None),
                 )
                 normalized_count += 1
             except Exception as exc:
@@ -187,7 +220,7 @@ class RecognitionService:
                     duration_ms=_duration_ms(started),
                     error=str(exc),
                     response_valid_json=not isinstance(exc, json.JSONDecodeError),
-                    model=getattr(client, "model", None) if client else None,
+                    model=getattr(client, "model", None) if client else getattr(fallback_client, "model", None),
                 )
                 error_count += 1
 
@@ -199,20 +232,14 @@ class RecognitionService:
             error_count=error_count,
         )
 
-    async def _get_client(self, use_gemini: bool) -> TitleNormalizerClient | None:
+    async def _get_client(self, use_gemini: bool, use_fallback: bool = False) -> TitleNormalizerClient | None:
         settings = await self.settings.get_or_create()
         if use_gemini:
+            if use_fallback:
+                return _build_fallback_cloud_client(settings)
             if self.gemini_client is not None:
                 return self.gemini_client
-            if settings.cloud_ai_provider == "gemini" and _usable_secret(settings.cloud_ai_api_key) and settings.cloud_ai_model:
-                return GeminiTitleNormalizer(settings.cloud_ai_api_key, settings.cloud_ai_model)
-            if settings.cloud_ai_provider in {"openai", "custom"} and settings.cloud_ai_model:
-                return OpenAICompatibleTitleNormalizer(
-                    settings.cloud_ai_base_url or "https://api.openai.com",
-                    settings.cloud_ai_model,
-                    settings.cloud_ai_api_key if _usable_secret(settings.cloud_ai_api_key) else None,
-                )
-            return None
+            return _build_primary_cloud_client(settings)
         if self.local_client is not None:
             return self.local_client
 
@@ -359,6 +386,39 @@ def _missing_cloud_preflight(provider: str | None, model: str | None, key: str |
         error="Cloud AI client is not configured.",
         error_type="not_configured",
     )
+
+
+def _build_primary_cloud_client(settings) -> TitleNormalizerClient | None:
+    if settings.cloud_ai_provider == "gemini" and _usable_secret(settings.cloud_ai_api_key) and settings.cloud_ai_model:
+        return GeminiTitleNormalizer(settings.cloud_ai_api_key, settings.cloud_ai_model)
+    if settings.cloud_ai_provider in {"openai", "custom"} and settings.cloud_ai_model:
+        return OpenAICompatibleTitleNormalizer(
+            settings.cloud_ai_base_url or "https://api.openai.com",
+            settings.cloud_ai_model,
+            settings.cloud_ai_api_key if _usable_secret(settings.cloud_ai_api_key) else None,
+        )
+    return None
+
+
+def _build_fallback_cloud_client(settings) -> TitleNormalizerClient | None:
+    provider = settings.cloud_ai_fallback_provider
+    model = settings.cloud_ai_fallback_model
+    if not provider or provider == "none" or not model:
+        return None
+    key = settings.cloud_ai_fallback_api_key
+    if not _usable_secret(key) and provider == settings.cloud_ai_provider:
+        key = settings.cloud_ai_api_key
+    if provider == "gemini":
+        if not _usable_secret(key):
+            return None
+        return GeminiTitleNormalizer(key, model)
+    if provider in {"openai", "custom"}:
+        return OpenAICompatibleTitleNormalizer(
+            settings.cloud_ai_base_url or "https://api.openai.com",
+            model,
+            key if _usable_secret(key) else None,
+        )
+    return None
 
 
 def _usable_secret(value: str | None) -> bool:

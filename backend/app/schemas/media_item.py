@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from ..models.enums import MediaItemStatus, MediaType
+from ..models.enums import MediaItemStatus, MediaType, ReviewDecision
 
 
 class MediaItemRead(BaseModel):
@@ -58,6 +58,15 @@ class MediaItemRead(BaseModel):
     gemini_model: str | None = None
     confidence: float | None = None
     needs_review: bool
+    review_decision: ReviewDecision = ReviewDecision.PENDING
+    reviewed_at: datetime | None = None
+    review_note: str | None = None
+    manual_title: str | None = None
+    manual_year: int | None = None
+    manual_tmdb_id: int | None = None
+    manual_imdb_id: str | None = None
+    manual_tvdb_id: int | None = None
+    manual_media_type: str | None = None
     created_at: datetime
     updated_at: datetime
 

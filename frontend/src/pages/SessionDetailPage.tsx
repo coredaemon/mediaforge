@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
+  applyReviewDecision,
   createPlan,
   createRecognitionCorrection,
   deleteScanSession,
@@ -13,6 +14,8 @@ import {
   listPlanOperations,
   listPlans,
   listTmdbCandidates,
+  manualTmdbLookup,
+  manualTmdbSearch,
   matchTmdbSession,
   normalizeLocalAi,
   parseSession,
@@ -142,10 +145,26 @@ function formatPreflightError(result: RecognitionPreflightResult): string {
   if (!result.local.ok) {
     return result.local.error ?? "Local LLM did not respond. Check that Ollama is running, the model is selected, and the endpoint is reachable.";
   }
-  if (!result.cloud.ok) {
-    return result.cloud.error ?? "Gemini did not respond. Check the API key and cloud AI settings.";
+  if (!result.cloud.ok && !(result.cloud_fallback?.ok)) {
+    return result.cloud.error ?? "Cloud AI did not respond. Check the API key and cloud AI settings.";
   }
   return "AI preflight failed.";
+}
+
+function labelReviewDecision(decision: string, status: string): { label: string; tone: BadgeTone } {
+  switch (decision) {
+    case "approved":
+      return { label: "Подтверждено", tone: "success" };
+    case "ignored":
+      return { label: "Не добавлять", tone: "danger" };
+    case "deferred":
+      return { label: "Отложено", tone: "warning" };
+    case "manual_override":
+      return { label: "Исправлено вручную", tone: "info" };
+    default:
+      if (status === "MATCHED") return { label: "Автоматически найдено", tone: "success" };
+      return { label: "Требует проверки", tone: "warning" };
+  }
 }
 
 function formatCheckStatus(check: RecognitionPreflightResult["local"] | null | undefined): string {
@@ -171,13 +190,22 @@ function PreflightPanel({ result, status }: { result: RecognitionPreflightResult
           {result?.local.error ? <small className="error-text">{result.local.error}</small> : null}
         </div>
         <div>
-          <span>Cloud LLM</span>
+          <span>Cloud LLM (primary)</span>
           <strong>{formatCheckStatus(result?.cloud)}</strong>
           {result?.cloud.model ? <small>{result.cloud.model}</small> : null}
           {result?.cloud.provider ? <small>{result.cloud.provider}</small> : null}
           {result?.cloud.error ? <small className="error-text">{result.cloud.error}</small> : null}
         </div>
+        {result?.cloud_fallback ? (
+          <div>
+            <span>Cloud LLM (fallback)</span>
+            <strong>{formatCheckStatus(result.cloud_fallback)}</strong>
+            {result.cloud_fallback.model ? <small>{result.cloud_fallback.model}</small> : null}
+            {result.cloud_fallback.error ? <small className="error-text">{result.cloud_fallback.error}</small> : null}
+          </div>
+        ) : null}
       </div>
+      {result?.warning ? <div className="message warning">{result.warning}</div> : null}
     </div>
   );
 }
@@ -273,6 +301,15 @@ export function SessionDetailPage() {
       operations: operations.length,
     };
   }, [files, items, operations]);
+
+  const planExcluded = useMemo(() => {
+    const ignored = items.filter((item) => item.review_decision === "ignored").length;
+    const deferred = items.filter((item) => item.review_decision === "deferred").length;
+    const plannable = items.filter(
+      (item) => item.status === "MATCHED" && !["ignored", "deferred"].includes(item.review_decision),
+    ).length;
+    return { ignored, deferred, plannable };
+  }, [items]);
 
   const matchedItems = items.filter((item) => item.status === "MATCHED");
   const reviewItems = items.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN");
@@ -498,6 +535,24 @@ export function SessionDetailPage() {
         </details>
       </section>
 
+      <section className="panel">
+        <div className="section-heading">
+          <h3>Решение по найденным объектам</h3>
+          <span className="muted">
+            В план: {planExcluded.plannable} · исключено: {planExcluded.ignored} · отложено: {planExcluded.deferred}
+          </span>
+        </div>
+        <ReviewDecisionsList
+          items={items}
+          busy={busy}
+          onDecision={async (itemId, payload) => {
+            await applyReviewDecision(itemId, payload);
+            await loadAll();
+          }}
+          onRebuildPlan={() => runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
+        />
+      </section>
+
       <section className="summary-dashboard">
         <SummaryCard label="Всего файлов" value={summary.totalFiles} />
         <SummaryCard label="Видео" value={summary.video} />
@@ -515,7 +570,10 @@ export function SessionDetailPage() {
           <h3>Найдено в TMDB</h3>
           <span className="muted">{matchedItems.length}</span>
         </div>
-        <ItemList variant="matched" items={matchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+        <ItemList variant="matched" items={matchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
+          await applyReviewDecision(itemId, payload);
+          await loadAll();
+        }} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -527,7 +585,10 @@ export function SessionDetailPage() {
           <h3>Требуют проверки</h3>
           <span className="muted">{reviewItems.length}</span>
         </div>
-        <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+        <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
+          await applyReviewDecision(itemId, payload);
+          await loadAll();
+        }} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -539,7 +600,10 @@ export function SessionDetailPage() {
           <h3>Не найдено</h3>
           <span className="muted">{unmatchedItems.length}</span>
         </div>
-        <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+        <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
+          await applyReviewDecision(itemId, payload);
+          await loadAll();
+        }} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -549,7 +613,10 @@ export function SessionDetailPage() {
       {otherItems.length > 0 ? (
         <section className="panel">
           <h3>Другие объекты</h3>
-          <ItemList variant="review" items={otherItems} busy={busy} onCandidates={showCandidates} onCorrection={async (item, payload) => {
+          <ItemList variant="review" items={otherItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
+          await applyReviewDecision(itemId, payload);
+          await loadAll();
+        }} onCorrection={async (item, payload) => {
           await createRecognitionCorrection(item.id, payload);
           await matchTmdbSession(numId, true);
           await loadAll();
@@ -563,6 +630,12 @@ export function SessionDetailPage() {
             <h3>Кандидаты TMDB для объекта #{selectedItemId}</h3>
             <button type="button" onClick={() => setSelectedItemId(null)}>Закрыть</button>
           </div>
+          <ManualCandidateSearch
+            itemId={selectedItemId}
+            busy={busy}
+            onResults={setCandidates}
+            onError={setError}
+          />
           {candidates.length === 0 ? <p className="muted">Кандидатов пока нет. Сначала запустите поиск в TMDB.</p> : null}
           <div className="candidate-list">
             {candidates.map((candidate) => (
@@ -582,6 +655,12 @@ export function SessionDetailPage() {
           <div>
             <h3>План операций</h3>
             <p className="muted">Это только план. Файлы пока не изменяются.</p>
+            {planExcluded.ignored + planExcluded.deferred > 0 ? (
+              <p className="message warning">
+                {planExcluded.ignored + planExcluded.deferred} объект(ов) исключено из плана
+                ({planExcluded.ignored} не добавлять, {planExcluded.deferred} отложено).
+              </p>
+            ) : null}
           </div>
           <button
             type="button"
@@ -638,18 +717,31 @@ type CorrectionPayload = {
   confidence?: number | null;
 };
 
+type ReviewPayload = {
+  decision: string;
+  note?: string | null;
+  manual_title?: string | null;
+  manual_year?: number | null;
+  manual_tmdb_id?: number | null;
+  manual_imdb_id?: string | null;
+  manual_tvdb_id?: number | null;
+  manual_media_type?: string | null;
+};
+
 function ItemList({
   items,
   variant,
   busy,
   onCandidates,
   onCorrection,
+  onDecision,
 }: {
   items: MediaItem[];
   variant: "matched" | "review";
   busy: boolean;
   onCandidates: (itemId: number) => Promise<void>;
   onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
+  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
 }) {
   if (items.length === 0) {
     return <p className="muted">Нет объектов в этом разделе.</p>;
@@ -664,6 +756,7 @@ function ItemList({
           busy={busy}
           onCandidates={onCandidates}
           onCorrection={onCorrection}
+          onDecision={onDecision}
         />
       ))}
     </div>
@@ -676,12 +769,14 @@ function MediaItemCard({
   busy,
   onCandidates,
   onCorrection,
+  onDecision,
 }: {
   item: MediaItem;
   variant: "matched" | "review";
   busy: boolean;
   onCandidates: (itemId: number) => Promise<void>;
   onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
+  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
 }) {
   const poster = item.poster_url ?? tmdbImageUrl(item.poster_path);
   const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `Object #${item.id}`;
@@ -706,6 +801,10 @@ function MediaItemCard({
             <div className="item-badges">
               {variant === "matched" ? <Badge value="MATCHED" label="Найдено в TMDB" /> : null}
               {item.reused_from_memory ? <Badge value="MEMORY" label="Уже обработано ранее" /> : null}
+              <Badge
+                value={item.review_decision}
+                label={labelReviewDecision(item.review_decision, item.status).label}
+              />
               <Badge value={item.status} label={labelMediaItemStatus(item.status)} />
             </div>
           </div>
@@ -719,6 +818,7 @@ function MediaItemCard({
           {item.localized_overview ? <p className="item-overview">{item.localized_overview}</p> : null}
           {variant === "review" ? <RecognitionEvidence item={item} /> : null}
           {variant === "review" ? <CorrectionForm item={item} busy={busy} onSubmit={onCorrection} /> : null}
+          <ManualReviewPanel item={item} busy={busy} onCandidates={onCandidates} onDecision={onDecision} />
           <div className="item-actions">
             <button type="button" onClick={() => void onCandidates(item.id)}>
               Кандидаты TMDB
@@ -904,6 +1004,239 @@ function CorrectionForm({
     </details>
   );
 }
+
+function ManualReviewPanel({
+  item,
+  busy,
+  onCandidates,
+  onDecision,
+}: {
+  item: MediaItem;
+  busy: boolean;
+  onCandidates: (itemId: number) => Promise<void>;
+  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(item.manual_title ?? item.parsed_title ?? "");
+  const [year, setYear] = useState(String(item.manual_year ?? item.year ?? ""));
+  const [mediaType, setMediaType] = useState(item.manual_media_type ?? item.media_type);
+  const [tmdbId, setTmdbId] = useState(String(item.manual_tmdb_id ?? item.tmdb_id ?? ""));
+  const [imdbId, setImdbId] = useState(item.manual_imdb_id ?? item.imdb_id ?? "");
+  const [tvdbId, setTvdbId] = useState(String(item.manual_tvdb_id ?? item.tvdb_id ?? ""));
+
+  return (
+    <details className="manual-review-panel" open={item.status !== "MATCHED"}>
+      <summary>Ручная проверка</summary>
+      <div className="manual-review-grid">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
+        <input value={year} onChange={(e) => setYear(e.target.value)} placeholder="Год" inputMode="numeric" />
+        <select value={mediaType} onChange={(e) => setMediaType(e.target.value)}>
+          <option value="MOVIE">Фильм</option>
+          <option value="TV_SHOW">Сериал</option>
+          <option value="TV_EPISODE">Серия</option>
+        </select>
+        <input value={tmdbId} onChange={(e) => setTmdbId(e.target.value)} placeholder="TMDB ID" inputMode="numeric" />
+        <input value={imdbId} onChange={(e) => setImdbId(e.target.value)} placeholder="IMDb ID" />
+        <input value={tvdbId} onChange={(e) => setTvdbId(e.target.value)} placeholder="TVDB ID" inputMode="numeric" />
+      </div>
+      <div className="manual-review-actions">
+        <button
+          type="button"
+          disabled={busy || !title.trim()}
+          onClick={() =>
+            void (async () => {
+              await manualTmdbSearch(item.id, {
+                query: title.trim(),
+                year: year === "" ? null : Number(year),
+                media_type: mediaType === "MOVIE" ? "movie" : "tv",
+              });
+              await onCandidates(item.id);
+            })()
+          }
+        >
+          Искать в TMDB
+        </button>
+        <button
+          type="button"
+          disabled={busy || (!tmdbId && !imdbId && !tvdbId)}
+          onClick={() =>
+            void (async () => {
+              await manualTmdbLookup(item.id, {
+                tmdb_id: tmdbId ? Number(tmdbId) : null,
+                imdb_id: imdbId || null,
+                tvdb_id: tvdbId ? Number(tvdbId) : null,
+                media_type: mediaType === "MOVIE" ? "movie" : "tv",
+              });
+              await onCandidates(item.id);
+            })()
+          }
+        >
+          Загрузить по ID
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void onDecision(item.id, {
+              decision: "approved",
+              note: "Подтверждено пользователем",
+            })
+          }
+        >
+          Подтвердить выбранный вариант
+        </button>
+        <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "ignored", note: "Не добавлять" })}>
+          Не добавлять
+        </button>
+        <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "deferred", note: "Отложено" })}>
+          Отложить
+        </button>
+        <button
+          type="button"
+          disabled={busy || (!tmdbId && !imdbId)}
+          onClick={() =>
+            void onDecision(item.id, {
+              decision: "manual_override",
+              manual_title: title.trim() || null,
+              manual_year: year === "" ? null : Number(year),
+              manual_tmdb_id: tmdbId ? Number(tmdbId) : null,
+              manual_imdb_id: imdbId || null,
+              manual_tvdb_id: tvdbId ? Number(tvdbId) : null,
+              manual_media_type: mediaType,
+              note: "Исправлено вручную",
+            })
+          }
+        >
+          Сохранить исправление
+        </button>
+      </div>
+    </details>
+  );
+}
+
+function ManualCandidateSearch({
+  itemId,
+  busy,
+  onResults,
+  onError,
+}: {
+  itemId: number;
+  busy: boolean;
+  onResults: (candidates: TmdbMatchCandidate[]) => void;
+  onError: (message: string) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [year, setYear] = useState("");
+  const [mediaType, setMediaType] = useState("movie");
+  const [tmdbId, setTmdbId] = useState("");
+  const [imdbId, setImdbId] = useState("");
+  const [tvdbId, setTvdbId] = useState("");
+
+  return (
+    <div className="manual-candidate-search">
+      <strong>Найти другой вариант</strong>
+      <div className="manual-review-grid">
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
+        <input value={year} onChange={(e) => setYear(e.target.value)} placeholder="Год" inputMode="numeric" />
+        <select value={mediaType} onChange={(e) => setMediaType(e.target.value)}>
+          <option value="movie">Фильм</option>
+          <option value="tv">Сериал</option>
+        </select>
+        <input value={tmdbId} onChange={(e) => setTmdbId(e.target.value)} placeholder="TMDB ID" inputMode="numeric" />
+        <input value={imdbId} onChange={(e) => setImdbId(e.target.value)} placeholder="IMDb ID" />
+        <input value={tvdbId} onChange={(e) => setTvdbId(e.target.value)} placeholder="TVDB ID" inputMode="numeric" />
+      </div>
+      <div className="manual-review-actions">
+        <button
+          type="button"
+          disabled={busy || !title.trim()}
+          onClick={() =>
+            void (async () => {
+              try {
+                onResults(
+                  await manualTmdbSearch(itemId, {
+                    query: title.trim(),
+                    year: year === "" ? null : Number(year),
+                    media_type: mediaType,
+                  }),
+                );
+              } catch (err) {
+                onError(err instanceof ApiError ? err.message : "Поиск не удался");
+              }
+            })()
+          }
+        >
+          Искать
+        </button>
+        <button
+          type="button"
+          disabled={busy || (!tmdbId && !imdbId && !tvdbId)}
+          onClick={() =>
+            void (async () => {
+              try {
+                const candidate = await manualTmdbLookup(itemId, {
+                  tmdb_id: tmdbId ? Number(tmdbId) : null,
+                  imdb_id: imdbId || null,
+                  tvdb_id: tvdbId ? Number(tvdbId) : null,
+                  media_type: mediaType,
+                });
+                onResults([candidate]);
+              } catch (err) {
+                onError(err instanceof ApiError ? err.message : "Загрузка по ID не удалась");
+              }
+            })()
+          }
+        >
+          Загрузить по ID
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewDecisionsList({
+  items,
+  busy,
+  onDecision,
+  onRebuildPlan,
+}: {
+  items: MediaItem[];
+  busy: boolean;
+  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
+  onRebuildPlan: () => void;
+}) {
+  if (items.length === 0) return <p className="muted">Объектов пока нет.</p>;
+  return (
+    <div className="review-decisions-list">
+      {items.map((item) => {
+        const badge = labelReviewDecision(item.review_decision, item.status);
+        const title = item.localized_title ?? item.matched_title ?? item.parsed_title ?? item.original_title ?? `#${item.id}`;
+        return (
+          <div key={item.id} className="review-decision-row">
+            <div>
+              <strong>{title}</strong>
+              <Badge value={item.review_decision} label={badge.label} />
+            </div>
+            <div className="review-decision-actions">
+              <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "approved" })}>
+                Добавить
+              </button>
+              <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "ignored" })}>
+                Не добавлять
+              </button>
+              <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "deferred" })}>
+                Отложить
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <button type="button" disabled={busy} onClick={onRebuildPlan}>
+        Пересобрать план
+      </button>
+    </div>
+  );
+}
+
 function TechnicalTables({
   files,
   items,

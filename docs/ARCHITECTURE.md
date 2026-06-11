@@ -232,3 +232,40 @@ When a user changes the selected TMDB candidate, the existing dry-run plan may n
 `POST /scan-sessions/{id}/plan?force=true`
 
 This replaces the current draft/ready plan and reloads operations. It still does not apply anything to the filesystem.
+
+## Human Override Flow
+
+Users can correct wrong TMDB matches without touching files on disk:
+
+1. Manual search: `POST /items/{item_id}/tmdb-search` with title/year/media_type (`ru-RU` first, `en-US` fallback).
+2. Manual ID lookup: `POST /items/{item_id}/tmdb-lookup` with `tmdb_id`, `imdb_id`, or `tvdb_id`.
+3. Candidate select: `POST /items/{item_id}/tmdb-candidates/{candidate_id}/select`.
+4. Review decision: `POST /items/{item_id}/review-decision` with `approved`, `ignored`, `deferred`, or `manual_override`.
+
+`MediaItem.review_decision` values:
+
+| Decision | Planning |
+|----------|----------|
+| `pending` | Included if `MATCHED` and not ignored/deferred |
+| `approved` | Included |
+| `manual_override` | Included; uses manually loaded TMDB data |
+| `ignored` | Excluded |
+| `deferred` | Excluded |
+
+Manual overrides upsert `ProcessedMediaRecord` and create `RecognitionCorrection` entries for memory reuse.
+
+## Manual ID Lookup
+
+- **TMDB ID**: direct `/movie/{id}` or `/tv/{id}` with `append_to_response=external_ids,images,translations`.
+- **IMDb ID**: TMDB `/find/{imdb_id}?external_source=imdb_id`, then details.
+- **TVDB ID**: TMDB `/find/{tvdb_id}?external_source=tvdb_id`, then details.
+
+Lookup creates or updates `TmdbMatchCandidate` rows but does not auto-select unless review-decision or select endpoint is used.
+
+## Cloud Primary / Fallback
+
+`AppSettings` stores primary cloud AI (`cloud_ai_*`) and optional fallback (`cloud_ai_fallback_*`). If fallback key is empty but provider matches primary, the primary key is reused.
+
+`RecognitionService.preflight()` checks local LLM, primary cloud, and fallback cloud. Pipeline is allowed when local + (primary OR fallback) succeed. Warning is returned when only fallback works.
+
+During `resolve_with_gemini`, primary cloud is tried per item; on failure the fallback client is used. Diagnostics are stored in `gemini_*` item fields including which model actually ran.

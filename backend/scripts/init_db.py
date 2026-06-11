@@ -66,6 +66,18 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("tmdb_match_candidates", "wikidata_id", "VARCHAR(64)", ""),
     ("tmdb_match_candidates", "metadata_language", "VARCHAR(16)", ""),
     ("tmdb_match_candidates", "overview_is_fallback", "BOOLEAN", "DEFAULT 0"),
+    ("media_items", "review_decision", "VARCHAR(32)", "DEFAULT 'pending'"),
+    ("media_items", "reviewed_at", "DATETIME", ""),
+    ("media_items", "review_note", "TEXT", ""),
+    ("media_items", "manual_title", "VARCHAR(512)", ""),
+    ("media_items", "manual_year", "INTEGER", ""),
+    ("media_items", "manual_tmdb_id", "INTEGER", ""),
+    ("media_items", "manual_imdb_id", "VARCHAR(32)", ""),
+    ("media_items", "manual_tvdb_id", "INTEGER", ""),
+    ("media_items", "manual_media_type", "VARCHAR(32)", ""),
+    ("app_settings", "cloud_ai_fallback_provider", "VARCHAR(64)", ""),
+    ("app_settings", "cloud_ai_fallback_api_key", "TEXT", ""),
+    ("app_settings", "cloud_ai_fallback_model", "VARCHAR(256)", ""),
 ]
 
 

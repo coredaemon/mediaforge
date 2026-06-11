@@ -10,15 +10,18 @@ class FakeTmdbClient:
         tv_results: list[TmdbSearchResult] | None = None,
         movie_details: dict[int, TmdbDetailsResult] | None = None,
         tv_details: dict[int, TmdbDetailsResult] | None = None,
+        find_results: dict[tuple[str, str], list[TmdbSearchResult]] | None = None,
     ) -> None:
         self.movie_results = movie_results or []
         self.tv_results = tv_results or []
         self.movie_details = movie_details or {}
         self.tv_details = tv_details or {}
+        self.find_results = find_results or {}
         self.movie_calls: list[tuple[str, int | None, str]] = []
         self.tv_calls: list[tuple[str, int | None, str]] = []
         self.movie_detail_calls: list[tuple[int, str]] = []
         self.tv_detail_calls: list[tuple[int, str]] = []
+        self.find_calls: list[tuple[str, str, str]] = []
 
     async def search_movie(
         self,
@@ -68,6 +71,15 @@ class FakeTmdbClient:
             external_ids=TmdbExternalIds(imdb_id="tt123", wikidata_id="Q1"),
             metadata_language=language,
         )
+
+    async def find_by_external_id(
+        self,
+        external_id: str,
+        external_source: str,
+        language: str = "ru-RU",
+    ) -> list[TmdbSearchResult]:
+        self.find_calls.append((external_id, external_source, language))
+        return self.find_results.get((external_id, external_source), [])
 
     async def get_tv_details(self, tmdb_id: int, language: str = "ru-RU") -> TmdbDetailsResult:
         self.tv_detail_calls.append((tmdb_id, language))

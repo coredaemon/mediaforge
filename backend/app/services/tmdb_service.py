@@ -1,7 +1,10 @@
+from datetime import UTC, datetime
+
+import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
-from ..models.enums import MediaItemStatus, MediaType
+from ..models.enums import MediaItemStatus, MediaType, ReviewDecision
 from ..models.media_item import MediaItem
 from ..models.tmdb_match_candidate import TmdbMatchCandidate
 from ..repositories.app_settings_repository import AppSettingsRepository
@@ -9,7 +12,7 @@ from ..repositories.media_file_repository import MediaFileRepository
 from ..repositories.media_item_repository import MediaItemRepository
 from ..repositories.scan_session_repository import ScanSessionRepository
 from ..repositories.tmdb_match_candidate_repository import TmdbMatchCandidateRepository
-from ..schemas.tmdb import TmdbMatchResult, TmdbSearchResult
+from ..schemas.tmdb import TmdbDetailsResult, TmdbMatchResult, TmdbSearchResult
 from ..utils.tmdb_images import tmdb_image_url
 from .processed_media_service import ProcessedMediaService
 from .scan_session_service import ScanSessionNotFoundError
@@ -84,6 +87,133 @@ class TMDBService:
             skipped_count=skipped_count,
         )
 
+    async def manual_search(
+        self,
+        item_id: int,
+        query: str,
+        year: int | None,
+        media_type: str,
+        language: str = RU_LANGUAGE,
+    ) -> list[TmdbMatchCandidate]:
+        item = await self.media_items.get_by_id(item_id)
+        if item is None:
+            raise MediaItemNotFoundError(f"Media item {item_id} was not found.")
+        await self._ensure_client()
+
+        normalized_type = _normalize_search_media_type(media_type)
+        if normalized_type == "movie":
+            results = await self._search_movie_with_fallback(query, year)
+        elif normalized_type == "tv":
+            results = await self._search_tv_with_fallback(query, year)
+        else:
+            raise TmdbLookupError(f"Unsupported media type for search: {media_type}")
+
+        saved: list[TmdbMatchCandidate] = []
+        for result in results:
+            score = score_tmdb_candidate(result.title, result.year or year, result)
+            candidate = await self.candidates.create(self._candidate_from_result(item.id, result, score))
+            await self._enrich_candidate(candidate)
+            saved.append(candidate)
+        await self.session.commit()
+        for candidate in saved:
+            await self.session.refresh(candidate)
+        return saved
+
+    async def manual_lookup(
+        self,
+        item_id: int,
+        *,
+        tmdb_id: int | None = None,
+        imdb_id: str | None = None,
+        tvdb_id: int | None = None,
+        media_type: str | None = None,
+        select: bool = False,
+    ) -> TmdbMatchCandidate:
+        item = await self.media_items.get_by_id(item_id)
+        if item is None:
+            raise MediaItemNotFoundError(f"Media item {item_id} was not found.")
+        await self._ensure_client()
+
+        warning: str | None = None
+        resolved_type: str | None = None
+        resolved_id: int | None = None
+
+        if tmdb_id is not None:
+            resolved_id = tmdb_id
+            resolved_type = _normalize_search_media_type(media_type or "movie")
+            try:
+                details = await fetch_localized_details(self.client, tmdb_id=tmdb_id, media_type=resolved_type)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    raise TmdbLookupNotFoundError(f"TMDB ID {tmdb_id} not found.") from exc
+                raise TmdbLookupError(f"TMDB lookup failed: {exc}") from exc
+            except Exception as exc:
+                raise TmdbLookupError(f"TMDB lookup failed: {exc}") from exc
+            result = _search_result_from_details(details)
+        elif imdb_id:
+            results = await self.client.find_by_external_id(imdb_id.strip(), "imdb_id")
+            if not results:
+                raise TmdbLookupNotFoundError(f"IMDb ID {imdb_id} not found in TMDB.")
+            picked = _pick_find_result(results, media_type)
+            resolved_id = picked.tmdb_id
+            resolved_type = picked.media_type
+            details = await fetch_localized_details(self.client, tmdb_id=resolved_id, media_type=resolved_type)
+            result = _search_result_from_details(details)
+            if media_type and _normalize_search_media_type(media_type) != resolved_type:
+                warning = f"Found {resolved_type}, but requested {media_type}."
+        elif tvdb_id is not None:
+            results = await self.client.find_by_external_id(str(tvdb_id), "tvdb_id")
+            if not results:
+                raise TmdbLookupNotFoundError(f"TVDB ID {tvdb_id} not found in TMDB.")
+            picked = _pick_find_result(results, media_type or "tv")
+            resolved_id = picked.tmdb_id
+            resolved_type = picked.media_type
+            details = await fetch_localized_details(self.client, tmdb_id=resolved_id, media_type=resolved_type)
+            result = _search_result_from_details(details)
+            if media_type and _normalize_search_media_type(media_type) != resolved_type:
+                warning = f"Found {resolved_type}, but requested {media_type}."
+        else:
+            raise TmdbLookupError("Provide tmdb_id, imdb_id, or tvdb_id.")
+
+        score = 1.0
+        candidate = await self.candidates.create(self._candidate_from_result(item.id, result, score))
+        apply_details_to_candidate(candidate, details)
+        await self.session.flush()
+
+        if select:
+            await self.candidates.clear_selected_for_media_item(item.id)
+            candidate.is_selected = True
+            apply_details_to_item(item, details)
+            item.tmdb_id = candidate.tmdb_id
+            item.tmdb_media_type = candidate.media_type
+            item.matched_title = candidate.title
+            item.matched_year = candidate.year
+            item.match_confidence = candidate.score
+            item.status = MediaItemStatus.MATCHED
+            item.needs_review = False
+            item.review_decision = ReviewDecision.MANUAL_OVERRIDE
+            item.reviewed_at = datetime.now(UTC)
+            item.manual_tmdb_id = resolved_id
+            item.manual_imdb_id = imdb_id
+            item.manual_tvdb_id = tvdb_id
+            item.manual_media_type = resolved_type
+            video_file = await self.media_files.get_video_for_media_item(item.id)
+            await self.processed_media.record_from_item(item, video_file, session_id=item.scan_session_id)
+
+        await self.session.commit()
+        await self.session.refresh(candidate)
+        if warning:
+            candidate.raw_json = {**(candidate.raw_json or {}), "lookup_warning": warning}
+        return candidate
+
+    async def _ensure_client(self) -> None:
+        if isinstance(self.client, TmdbClient) and not self.client.api_key:
+            app_settings = await AppSettingsRepository(self.session).get_or_create()
+            if app_settings.tmdb_api_key:
+                self.client = TmdbClient(app_settings.tmdb_api_key)
+            else:
+                raise TmdbApiKeyMissingError("TMDB_API_KEY is not configured")
+
     async def select_candidate(self, item_id: int, candidate_id: int) -> TmdbMatchCandidate:
         item = await self.media_items.get_by_id(item_id)
         if item is None:
@@ -122,6 +252,8 @@ class TMDBService:
         item.match_confidence = candidate.score
         item.status = MediaItemStatus.MATCHED
         item.needs_review = False
+        item.review_decision = ReviewDecision.MANUAL_OVERRIDE
+        item.reviewed_at = item.reviewed_at or datetime.now(UTC)
 
         video_file = await self.media_files.get_video_for_media_item(item.id)
         await self.processed_media.record_from_item(item, video_file, session_id=item.scan_session_id)
@@ -283,6 +415,14 @@ class TmdbCandidateOwnershipError(ValueError):
     """Raised when a TMDB candidate belongs to another media item."""
 
 
+class TmdbLookupError(ValueError):
+    """Raised when a manual TMDB lookup request is invalid or fails."""
+
+
+class TmdbLookupNotFoundError(LookupError):
+    """Raised when TMDB cannot resolve the provided external id."""
+
+
 def _priority_queries(item: MediaItem) -> list[str]:
     values: list[str | None] = [
         *(item.tmdb_queries or []),
@@ -304,6 +444,37 @@ def _priority_queries(item: MediaItem) -> list[str]:
 
 def _priority_year(item: MediaItem) -> int | None:
     return item.gemini_year or item.ai_year or item.year
+
+
+def _normalize_search_media_type(media_type: str) -> str:
+    normalized = (media_type or "movie").strip().lower()
+    if normalized in {"movie", "movies", "film"}:
+        return "movie"
+    if normalized in {"tv", "tv_show", "tv_show", "series", "show", "tv_episode", "episode"}:
+        return "tv"
+    return normalized
+
+
+def _pick_find_result(results: list[TmdbSearchResult], media_type: str | None) -> TmdbSearchResult:
+    if media_type:
+        wanted = _normalize_search_media_type(media_type)
+        for result in results:
+            if result.media_type == wanted:
+                return result
+    return results[0]
+
+
+def _search_result_from_details(details: TmdbDetailsResult) -> TmdbSearchResult:
+    return TmdbSearchResult(
+        tmdb_id=details.tmdb_id,
+        media_type=details.media_type,
+        title=details.title,
+        original_title=details.original_title,
+        overview=details.overview,
+        year=details.year,
+        poster_path=details.poster_path,
+        backdrop_path=details.backdrop_path,
+    )
 
 
 def _priority_media_type(item: MediaItem) -> MediaType:

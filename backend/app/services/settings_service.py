@@ -38,9 +38,15 @@ class SettingsService:
             cloud_ai_configured=bool(
                 s.cloud_ai_provider and s.cloud_ai_provider != "none" and _usable_secret(s.cloud_ai_api_key)
             ),
+            cloud_primary_configured=bool(
+                s.cloud_ai_provider and s.cloud_ai_provider != "none" and _usable_secret(s.cloud_ai_api_key)
+            ),
+            cloud_fallback_configured=_cloud_fallback_configured(s),
             cloud_ai_provider=s.cloud_ai_provider,
             cloud_ai_base_url=s.cloud_ai_base_url,
             cloud_ai_model=s.cloud_ai_model,
+            cloud_ai_fallback_provider=s.cloud_ai_fallback_provider,
+            cloud_ai_fallback_model=s.cloud_ai_fallback_model,
             recognition_ai_enabled=s.recognition_ai_enabled,
             default_source_path=s.default_source_path,
             default_target_path=s.default_target_path,
@@ -58,6 +64,10 @@ class SettingsService:
             data["cloud_ai_provider"] = payload.cloud_ai_provider
         if payload.cloud_ai_api_key is not None and not _usable_secret(payload.cloud_ai_api_key):
             data.pop("cloud_ai_api_key", None)
+        if payload.cloud_ai_fallback_provider is not None:
+            data["cloud_ai_fallback_provider"] = payload.cloud_ai_fallback_provider
+        if payload.cloud_ai_fallback_api_key is not None and not _usable_secret(payload.cloud_ai_fallback_api_key):
+            data.pop("cloud_ai_fallback_api_key", None)
         if payload.recognition_ai_enabled is not None:
             data["recognition_ai_enabled"] = payload.recognition_ai_enabled
         await self.repo.update(data)
@@ -143,15 +153,19 @@ class SettingsService:
             return LocalModelsResult(success=False, models=[], message=str(exc))
 
     async def get_cloud_models(self, payload: CloudModelsRequest) -> CloudModelsResult:
+        settings = await self.repo.get_or_create()
         provider = payload.provider
         if provider == "gemini":
-            key = payload.api_key if _usable_secret(payload.api_key) else (await self.repo.get_or_create()).cloud_ai_api_key
+            key = payload.api_key if _usable_secret(payload.api_key) else settings.cloud_ai_api_key
+            if not _usable_secret(key) and settings.cloud_ai_fallback_provider == "gemini":
+                key = settings.cloud_ai_fallback_api_key or settings.cloud_ai_api_key
             if not _usable_secret(key):
                 return CloudModelsResult(success=False, models=[], message="Gemini API key is not configured.")
             return await _get_gemini_models(key)
         if provider in {"openai", "custom"}:
-            settings = await self.repo.get_or_create()
             key = payload.api_key if _usable_secret(payload.api_key) else settings.cloud_ai_api_key
+            if not _usable_secret(key) and settings.cloud_ai_fallback_provider == provider:
+                key = settings.cloud_ai_fallback_api_key or settings.cloud_ai_api_key
             base_url = payload.base_url or settings.cloud_ai_base_url or "https://api.openai.com"
             if provider == "openai" and not _usable_secret(key):
                 return CloudModelsResult(success=False, models=[], message="OpenAI API key is not configured.")
@@ -163,6 +177,10 @@ class SettingsService:
         provider = payload.provider
         model = payload.model or settings.cloud_ai_model
         key = payload.api_key if _usable_secret(payload.api_key) else settings.cloud_ai_api_key
+        if not _usable_secret(key) and provider == settings.cloud_ai_fallback_provider:
+            key = settings.cloud_ai_fallback_api_key or settings.cloud_ai_api_key
+        if payload.model and payload.model == settings.cloud_ai_fallback_model:
+            model = settings.cloud_ai_fallback_model
         base_url = payload.base_url or settings.cloud_ai_base_url
         if provider == "gemini":
             if not _usable_secret(key):
@@ -285,6 +303,18 @@ async def _get_openai_models(base_url: str, api_key: str | None) -> CloudModelsR
         return CloudModelsResult(success=False, models=[], message=f"Could not connect to cloud AI endpoint {base_url}.")
     except Exception as exc:
         return CloudModelsResult(success=False, models=[], message=sanitize_error_text(str(exc)))
+
+
+def _cloud_fallback_configured(settings) -> bool:
+    provider = settings.cloud_ai_fallback_provider
+    if not provider or provider == "none":
+        return False
+    key = settings.cloud_ai_fallback_api_key
+    if _usable_secret(key):
+        return bool(settings.cloud_ai_fallback_model)
+    if provider == settings.cloud_ai_provider and _usable_secret(settings.cloud_ai_api_key):
+        return bool(settings.cloud_ai_fallback_model)
+    return False
 
 
 def _usable_secret(value: str | None) -> bool:

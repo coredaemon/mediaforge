@@ -73,3 +73,5 @@ class RecognitionPreflightResult(BaseModel):
     ok: bool
     local: LlmPreflightCheck
     cloud: LlmPreflightCheck
+    cloud_fallback: LlmPreflightCheck | None = None
+    warning: str | None = None

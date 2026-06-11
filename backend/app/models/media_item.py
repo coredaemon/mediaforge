@@ -5,7 +5,7 @@ from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..db.base import Base
-from .enums import MediaItemStatus, MediaType
+from .enums import MediaItemStatus, MediaType, ReviewDecision
 
 if TYPE_CHECKING:
     from .media_file import MediaFile
@@ -72,6 +72,15 @@ class MediaItem(Base):
     gemini_model: Mapped[str | None] = mapped_column(String(256))
     confidence: Mapped[float | None] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    review_decision: Mapped[str] = mapped_column(String(32), default=ReviewDecision.PENDING, nullable=False)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_note: Mapped[str | None] = mapped_column(Text)
+    manual_title: Mapped[str | None] = mapped_column(String(512))
+    manual_year: Mapped[int | None] = mapped_column(Integer)
+    manual_tmdb_id: Mapped[int | None] = mapped_column(Integer)
+    manual_imdb_id: Mapped[str | None] = mapped_column(String(32))
+    manual_tvdb_id: Mapped[int | None] = mapped_column(Integer)
+    manual_media_type: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

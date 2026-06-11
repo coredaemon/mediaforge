@@ -33,6 +33,14 @@ class TmdbClientProtocol(Protocol):
     async def get_tv_details(self, tmdb_id: int, language: str = RU_LANGUAGE) -> TmdbDetailsResult:
         ...
 
+    async def find_by_external_id(
+        self,
+        external_id: str,
+        external_source: str,
+        language: str = RU_LANGUAGE,
+    ) -> list[TmdbSearchResult]:
+        ...
+
 
 class TmdbApiKeyMissingError(RuntimeError):
     """Raised when TMDB matching is requested without a local API key."""
@@ -103,6 +111,27 @@ class TmdbClient:
             },
         )
         return self._details_from_tv(payload, language)
+
+    async def find_by_external_id(
+        self,
+        external_id: str,
+        external_source: str,
+        language: str = RU_LANGUAGE,
+    ) -> list[TmdbSearchResult]:
+        payload = await self._get(
+            f"/find/{external_id}",
+            {
+                "external_source": external_source,
+                "language": language,
+                "api_key": self.api_key,
+            },
+        )
+        results: list[TmdbSearchResult] = []
+        for result in payload.get("movie_results", []):
+            results.append(self._movie_result(result))
+        for result in payload.get("tv_results", []):
+            results.append(self._tv_result(result))
+        return results
 
     async def _get(self, path: str, params: dict[str, str | int]) -> dict:
         if not self.api_key:

@@ -60,7 +60,7 @@ class PlanningService:
             await self.operation_plans.delete_draft_or_ready_for_scan_session(session_id)
             await self.session.flush()
 
-        matched_items = await self.media_items.list_matched_by_scan_session(session_id)
+        matched_items = await self.media_items.list_plannable_by_scan_session(session_id)
         if not matched_items:
             raise NoMatchedItemsError(f"Scan session {session_id} has no matched media items.")
 
