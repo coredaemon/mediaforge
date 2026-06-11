@@ -907,11 +907,20 @@ th {
 }
 
 .bulk-review-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   margin-bottom: 1rem;
   padding: 0.75rem;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #f8fafc;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+}
+
+.bulk-selection-counters {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
 }
 
 .bulk-review-actions {
@@ -921,10 +930,103 @@ th {
   margin-top: 0.5rem;
 }
 
-.item-list-selectable {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+.review-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.review-item-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.review-item-poster {
+  flex: 0 0 96px;
+  width: 96px;
+}
+
+.review-item-poster img {
+  width: 96px;
+  height: 144px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #e2e8f0;
+}
+
+.compact-poster-placeholder {
+  width: 96px;
+  height: 144px;
+  min-height: 0;
+  font-size: 0.75rem;
+}
+
+.review-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.review-item-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.review-item-overview {
+  color: #334155;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0.35rem 0 0;
+}
+
+.review-item-ids {
+  margin-top: 0.25rem;
+}
+
+.candidates-modal-card {
+  max-width: 900px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.apply-runs-block {
+  margin-top: 1rem;
+}
+
+.apply-runs-block h4 {
+  margin: 0 0 0.5rem;
+}
+
+.apply-runs-table {
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.plan-details-summary {
+  margin-bottom: 0.75rem;
+}
+
+.session-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.session-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
 }
 
 .item-select-checkbox {
@@ -1040,7 +1142,11 @@ th {
 }
 
 @media (max-width: 768px) {
-  .item-list-selectable {
-    grid-template-columns: 1fr;
+  .review-item-row {
+    flex-direction: column;
+  }
+
+  .review-item-poster {
+    flex-basis: auto;
   }
 }

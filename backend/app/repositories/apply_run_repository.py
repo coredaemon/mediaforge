@@ -1,9 +1,11 @@
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..models.apply_operation_log import ApplyOperationLog
 from ..models.apply_run import ApplyRun
+from ..models.operation_plan import OperationPlan
 
 
 class ApplyRunRepository:
@@ -22,3 +24,12 @@ class ApplyRunRepository:
             .order_by(ApplyRun.started_at.desc(), ApplyRun.id.desc())
         )
         return result.scalars().all()
+
+    async def delete_logs_for_scan_session(self, scan_session_id: int) -> None:
+        plan_ids_subq = select(OperationPlan.id).where(OperationPlan.scan_session_id == scan_session_id)
+        run_ids_subq = select(ApplyRun.id).where(ApplyRun.operation_plan_id.in_(plan_ids_subq))
+        await self.session.execute(delete(ApplyOperationLog).where(ApplyOperationLog.apply_run_id.in_(run_ids_subq)))
+
+    async def delete_runs_for_scan_session(self, scan_session_id: int) -> None:
+        plan_ids_subq = select(OperationPlan.id).where(OperationPlan.scan_session_id == scan_session_id)
+        await self.session.execute(delete(ApplyRun).where(ApplyRun.operation_plan_id.in_(plan_ids_subq)))

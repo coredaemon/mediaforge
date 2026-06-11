@@ -56,6 +56,15 @@ function formatPydanticErrors(errors: PydanticError[]): string {
     .join("; ");
 }
 
+function formatHttpError(status: number, detail?: string): string {
+  if (detail) return detail;
+  if (status === 404) return "Сессия не найдена";
+  if (status === 409) return "Операция не может быть выполнена из-за конфликта данных.";
+  if (status === 500) return "Сервер вернул ошибку. Попробуйте ещё раз или перезапустите backend.";
+  if (status === 0) return "Backend недоступен.";
+  return `Ошибка ${status}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
@@ -72,20 +81,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
-    let message = `Ошибка ${response.status}`;
+    let detail: string | undefined;
     try {
       const payload = (await response.json()) as { detail?: string | PydanticError[] };
       if (typeof payload.detail === "string") {
-        message = payload.detail;
+        detail = payload.detail;
       } else if (Array.isArray(payload.detail) && payload.detail.length > 0) {
-        message = formatPydanticErrors(payload.detail);
+        detail = formatPydanticErrors(payload.detail);
       }
     } catch {
-      // Response body is not JSON — keep HTTP status message.
       const text = await response.text().catch(() => "");
-      if (text) message = `Ошибка ${response.status}: ${text.slice(0, 200)}`;
+      if (text) detail = text.slice(0, 200);
     }
-    throw new ApiError(response.status, message);
+    throw new ApiError(response.status, formatHttpError(response.status, detail));
   }
 
   if (response.status === 204) {

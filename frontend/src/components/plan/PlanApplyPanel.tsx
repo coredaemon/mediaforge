@@ -1,5 +1,5 @@
 import { labelOperationPreview, labelOperationStatus, labelPlanStatus } from "../../labels";
-import type { MediaItem, OperationPlan, PlanApplyResult, PlanOperation, PlanValidationResult } from "../../types";
+import type { ApplyRun, MediaItem, OperationPlan, PlanApplyResult, PlanOperation, PlanValidationResult } from "../../types";
 import { canApplyPlan } from "../../utils/applyState";
 import { buildPlanSummary, formatPlanSummaryLine, groupOperationsByItem } from "../../utils/planSummary";
 
@@ -10,12 +10,13 @@ type Props = {
   items: MediaItem[];
   validation: PlanValidationResult | null;
   applyResult: PlanApplyResult | null;
+  applyRuns: ApplyRun[];
+  applyRunsError: string | null;
   busy: boolean;
   planStale: boolean;
   onSelectPlan: (planId: number) => void;
   onValidate: () => void;
   onApplyClick: () => void;
-  onRebuildPlan: () => void;
 };
 
 function itemTitle(item: MediaItem | undefined, itemId: number | null): string {
@@ -36,12 +37,13 @@ export function PlanApplyPanel({
   items,
   validation,
   applyResult,
+  applyRuns,
+  applyRunsError,
   busy,
   planStale,
   onSelectPlan,
   onValidate,
   onApplyClick,
-  onRebuildPlan,
 }: Props) {
   const activePlan = plans.find((p) => p.id === selectedPlanId) ?? plans[0] ?? null;
   const summary = buildPlanSummary(operations, items, validation?.conflict_count ?? 0);
@@ -73,9 +75,6 @@ export function PlanApplyPanel({
           </button>
           <button type="button" className="btn-primary" disabled={busy || !applyAllowed || planStale} onClick={onApplyClick}>
             Применить план
-          </button>
-          <button type="button" disabled={busy} onClick={onRebuildPlan}>
-            Пересобрать план
           </button>
         </div>
       </div>
@@ -112,19 +111,54 @@ export function PlanApplyPanel({
         <p className="muted">План ещё не построен.</p>
       )}
 
+      {applyRunsError ? <p className="message error">{applyRunsError}</p> : null}
+
+      {applyRuns.length > 0 ? (
+        <div className="apply-runs-block">
+          <h4>Журнал применения</h4>
+          <div className="table-wrap">
+            <table className="apply-runs-table">
+              <thead>
+                <tr>
+                  <th>Запуск</th>
+                  <th>Статус</th>
+                  <th>Операций</th>
+                  <th>Ошибка</th>
+                </tr>
+              </thead>
+              <tbody>
+                {applyRuns.map((run) => (
+                  <tr key={run.id}>
+                    <td>{new Date(run.started_at).toLocaleString("ru-RU")}</td>
+                    <td>{labelPlanStatus(run.status)}</td>
+                    <td>
+                      {run.done_operations}/{run.total_operations}
+                      {run.failed_operations > 0 ? ` (${run.failed_operations} ошибок)` : ""}
+                    </td>
+                    <td>{run.error_message ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
       {operations.length > 0 ? (
         <div className="plan-grouped-operations">
-          <p className="muted">Готово к применению:</p>
-          <ul className="plan-ready-summary">
-            <li>Фильмов: {summary.movies}</li>
-            <li>Будет создано папок: {summary.directories}</li>
-            <li>Будет перемещено файлов: {summary.moves}</li>
-            <li>Будет записано NFO: {summary.nfoWrites}</li>
-            <li>Будет скачано изображений: {summary.imageDownloads}</li>
-            <li>Исключено: {summary.excluded}</li>
-            <li>Отложено: {summary.deferred}</li>
-            <li>Конфликты: {summary.conflicts}</li>
-          </ul>
+          <details className="plan-details-summary">
+            <summary>Детали плана</summary>
+            <ul className="plan-ready-summary">
+              <li>Фильмов: {summary.movies}</li>
+              <li>Будет создано папок: {summary.directories}</li>
+              <li>Будет перемещено файлов: {summary.moves}</li>
+              <li>Будет записано NFO: {summary.nfoWrites}</li>
+              <li>Будет скачано изображений: {summary.imageDownloads}</li>
+              <li>Исключено: {summary.excluded}</li>
+              <li>Отложено: {summary.deferred}</li>
+              <li>Конфликты: {summary.conflicts}</li>
+            </ul>
+          </details>
 
           {[...grouped.entries()].map(([itemId, ops]) => (
             <details key={itemId ?? "unassigned"} className="plan-movie-group">

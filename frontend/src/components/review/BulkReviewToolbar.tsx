@@ -3,6 +3,9 @@ import type { BulkReviewResult } from "../../types";
 type Props = {
   busy: boolean;
   selectedCount: number;
+  plannable: number;
+  ignored: number;
+  deferred: number;
   lastResult: BulkReviewResult | null;
   onApproveAll: () => void;
   onApproveSelected: () => void;
@@ -15,6 +18,9 @@ type Props = {
 export function BulkReviewToolbar({
   busy,
   selectedCount,
+  plannable,
+  ignored,
+  deferred,
   lastResult,
   onApproveAll,
   onApproveSelected,
@@ -27,6 +33,9 @@ export function BulkReviewToolbar({
   return (
     <div className="bulk-review-toolbar">
       <strong>Массовые действия</strong>
+      <p className="muted bulk-selection-counters">
+        Выбрано: {selectedCount} · в план: {plannable} · исключено: {ignored} · отложено: {deferred}
+      </p>
       <div className="bulk-review-actions">
         <button type="button" disabled={busy} onClick={onApproveAll}>
           Одобрить всё найденное

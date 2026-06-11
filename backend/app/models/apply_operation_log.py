@@ -16,7 +16,10 @@ class ApplyOperationLog(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     apply_run_id: Mapped[int] = mapped_column(ForeignKey("apply_runs.id"), index=True)
-    plan_operation_id: Mapped[int] = mapped_column(ForeignKey("plan_operations.id"), index=True)
+    plan_operation_id: Mapped[int] = mapped_column(
+        ForeignKey("plan_operations.id", ondelete="CASCADE"),
+        index=True,
+    )
     operation_type: Mapped[OperationType] = mapped_column(Enum(OperationType), nullable=False)
     status: Mapped[OperationStatus] = mapped_column(Enum(OperationStatus), nullable=False)
     source_path: Mapped[str | None] = mapped_column(Text)

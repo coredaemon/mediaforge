@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.session import get_session
@@ -144,6 +145,12 @@ async def delete_scan_session(session_id: int, session: AsyncSession = Depends(g
         deleted_id = await ScanSessionService(session).delete_scan_session(session_id)
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Не удалось удалить сессию: остались связанные записи плана применения.",
+        ) from exc
     return ScanSessionDeleteResult(ok=True, id=deleted_id)
 
 

@@ -107,6 +107,20 @@ export function labelReviewDecision(value: string | null | undefined): string {
   return value ? (reviewDecisionLabels[value] ?? value) : "Неизвестно";
 }
 
+const matchSourceLabels: Record<string, string> = {
+  tmdb: "TMDB",
+  sidecar_tmdb_id: "Локальный ID",
+  sidecar_imdb_id: "Локальный ID",
+  sidecar_tvdb_id: "Локальный ID",
+  memory: "Память",
+  manual: "Вручную",
+};
+
+export function labelMatchSource(value: string | null | undefined): string {
+  if (!value) return "—";
+  return matchSourceLabels[value] ?? value;
+}
+
 export function statusTone(value: string | null | undefined): BadgeTone {
   if (!value) return "neutral";
   if (["MATCHED", "READY", "DONE", "COMPLETED", "APPLIED", "PARSED", "DISCOVERED", "approved"].includes(value)) return "success";
