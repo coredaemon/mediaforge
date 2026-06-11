@@ -1,9 +1,10 @@
 from fastapi.testclient import TestClient
 
 from backend.app.api.routes.scan_sessions import get_tmdb_client
+from backend.app.api.routes.recognition import get_cloud_preflight_client, get_local_preflight_client
 from backend.app.schemas.tmdb import TmdbSearchResult
 from backend.app.main import app
-from backend.tests.fakes import FakeTmdbClient
+from backend.tests.fakes import FakeTitleNormalizer, FakeTmdbClient
 
 
 def test_scan_session_api_flow(client: TestClient, tmp_path) -> None:
@@ -215,3 +216,18 @@ def test_select_tmdb_candidate_api_errors(client: TestClient, tmp_path) -> None:
     assert missing_candidate.status_code == 404
     assert wrong_item.status_code == 400
     app.dependency_overrides.pop(get_tmdb_client, None)
+
+
+def test_recognition_preflight_api_flow(client: TestClient) -> None:
+    app.dependency_overrides[get_local_preflight_client] = lambda: FakeTitleNormalizer()
+    app.dependency_overrides[get_cloud_preflight_client] = lambda: FakeTitleNormalizer()
+
+    response = client.post("/recognition/preflight")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["local"]["duration_ms"] == 7
+    assert payload["cloud"]["response_valid_json"] is True
+    app.dependency_overrides.pop(get_local_preflight_client, None)
+    app.dependency_overrides.pop(get_cloud_preflight_client, None)

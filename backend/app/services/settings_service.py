@@ -23,6 +23,10 @@ class SettingsService:
             ai_provider=s.ai_provider,
             ai_base_url=s.ai_base_url,
             ai_model=s.ai_model,
+            cloud_ai_configured=bool(s.cloud_ai_provider and s.cloud_ai_provider != "none" and s.cloud_ai_api_key),
+            cloud_ai_provider=s.cloud_ai_provider,
+            cloud_ai_model=s.cloud_ai_model,
+            recognition_ai_enabled=s.recognition_ai_enabled,
             default_source_path=s.default_source_path,
             default_target_path=s.default_target_path,
             setup_completed=s.setup_completed,
@@ -35,6 +39,10 @@ class SettingsService:
             data["setup_completed"] = payload.setup_completed
         if payload.ai_provider is not None:
             data["ai_provider"] = payload.ai_provider
+        if payload.cloud_ai_provider is not None:
+            data["cloud_ai_provider"] = payload.cloud_ai_provider
+        if payload.recognition_ai_enabled is not None:
+            data["recognition_ai_enabled"] = payload.recognition_ai_enabled
         await self.repo.update(data)
         await self.session.commit()
         return await self.get_settings()

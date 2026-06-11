@@ -29,6 +29,20 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("media_items", "gemini_junk_tokens", "JSON", ""),
     ("media_items", "gemini_explanation", "TEXT", ""),
     ("media_items", "tmdb_queries", "JSON", ""),
+    ("media_items", "local_ai_status", "VARCHAR(32)", ""),
+    ("media_items", "local_ai_duration_ms", "INTEGER", ""),
+    ("media_items", "local_ai_error", "TEXT", ""),
+    ("media_items", "local_ai_response_valid_json", "BOOLEAN", ""),
+    ("media_items", "local_ai_model", "VARCHAR(256)", ""),
+    ("media_items", "gemini_status", "VARCHAR(32)", ""),
+    ("media_items", "gemini_duration_ms", "INTEGER", ""),
+    ("media_items", "gemini_error", "TEXT", ""),
+    ("media_items", "gemini_response_valid_json", "BOOLEAN", ""),
+    ("media_items", "gemini_model", "VARCHAR(256)", ""),
+    ("app_settings", "cloud_ai_provider", "VARCHAR(64)", ""),
+    ("app_settings", "cloud_ai_api_key", "TEXT", ""),
+    ("app_settings", "cloud_ai_model", "VARCHAR(256)", ""),
+    ("app_settings", "recognition_ai_enabled", "BOOLEAN", "DEFAULT 1"),
 ]
 
 
@@ -38,7 +52,8 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
         result = await conn.execute(text(f"PRAGMA table_info({table})"))
         existing_cols = {row[1] for row in result.fetchall()}
         if column not in existing_cols:
-            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+            default_sql = f" {_default}" if _default else ""
+            await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}{default_sql}"))
             logger.info("Migration: added column %s.%s", table, column)
 
 

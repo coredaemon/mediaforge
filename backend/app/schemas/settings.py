@@ -11,6 +11,10 @@ class AppSettingsRead(BaseModel):
     ai_provider: str | None
     ai_base_url: str | None
     ai_model: str | None
+    cloud_ai_configured: bool
+    cloud_ai_provider: str | None
+    cloud_ai_model: str | None
+    recognition_ai_enabled: bool
     default_source_path: str | None
     default_target_path: str | None
     setup_completed: bool
@@ -25,6 +29,10 @@ class AppSettingsUpdate(BaseModel):
     ai_api_key: str | None = None
     ai_base_url: str | None = None
     ai_model: str | None = None
+    cloud_ai_provider: str | None = None
+    cloud_ai_api_key: str | None = None
+    cloud_ai_model: str | None = None
+    recognition_ai_enabled: bool | None = None
     default_source_path: str | None = None
     default_target_path: str | None = None
     setup_completed: bool | None = None

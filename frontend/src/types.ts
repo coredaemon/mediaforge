@@ -64,6 +64,16 @@ export interface MediaItem {
   gemini_junk_tokens: string[] | null;
   gemini_explanation: string | null;
   tmdb_queries: string[] | null;
+  local_ai_status: string | null;
+  local_ai_duration_ms: number | null;
+  local_ai_error: string | null;
+  local_ai_response_valid_json: boolean | null;
+  local_ai_model: string | null;
+  gemini_status: string | null;
+  gemini_duration_ms: number | null;
+  gemini_error: string | null;
+  gemini_response_valid_json: boolean | null;
+  gemini_model: string | null;
   confidence: number | null;
   needs_review: boolean;
   created_at: string;
@@ -152,6 +162,10 @@ export interface AppSettingsRead {
   ai_provider: string | null;
   ai_base_url: string | null;
   ai_model: string | null;
+  cloud_ai_configured: boolean;
+  cloud_ai_provider: string | null;
+  cloud_ai_model: string | null;
+  recognition_ai_enabled: boolean;
   default_source_path: string | null;
   default_target_path: string | null;
   setup_completed: boolean;
@@ -164,6 +178,10 @@ export interface AppSettingsUpdate {
   ai_api_key?: string | null;
   ai_base_url?: string | null;
   ai_model?: string | null;
+  cloud_ai_provider?: string | null;
+  cloud_ai_api_key?: string | null;
+  cloud_ai_model?: string | null;
+  recognition_ai_enabled?: boolean | null;
   default_source_path?: string | null;
   default_target_path?: string | null;
   setup_completed?: boolean | null;
@@ -205,4 +223,24 @@ export interface PlanOperation {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface LlmPreflightCheck {
+  ok: boolean;
+  provider: string | null;
+  model: string | null;
+  endpoint: string | null;
+  duration_ms: number;
+  response_valid_json: boolean;
+  response_had_markdown: boolean;
+  response_preview: string | null;
+  message: string | null;
+  error: string | null;
+  error_type: string | null;
+}
+
+export interface RecognitionPreflightResult {
+  ok: boolean;
+  local: LlmPreflightCheck;
+  cloud: LlmPreflightCheck;
 }

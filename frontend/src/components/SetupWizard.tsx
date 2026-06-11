@@ -19,6 +19,10 @@ interface WizardData {
   aiApiKey: string;
   aiBaseUrl: string;
   aiModel: string;
+  cloudAiProvider: "none" | "gemini";
+  cloudAiApiKey: string;
+  cloudAiModel: string;
+  recognitionAiEnabled: boolean;
   sourcePath: string;
   targetPath: string;
 }
@@ -71,6 +75,10 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     aiApiKey: "",
     aiBaseUrl: "",
     aiModel: "",
+    cloudAiProvider: "gemini",
+    cloudAiApiKey: "",
+    cloudAiModel: "gemini-2.0-flash",
+    recognitionAiEnabled: true,
     sourcePath: "",
     targetPath: "",
   });
@@ -86,6 +94,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
           aiProvider: (s.ai_provider as AiProvider | null) ?? "none",
           aiBaseUrl: s.ai_base_url ?? "",
           aiModel: s.ai_model ?? "",
+          cloudAiProvider: (s.cloud_ai_provider as "none" | "gemini" | null) ?? "gemini",
+          cloudAiModel: s.cloud_ai_model ?? "gemini-2.0-flash",
+          recognitionAiEnabled: s.recognition_ai_enabled,
           sourcePath: prev.sourcePath || s.default_source_path || "",
           targetPath: prev.targetPath || s.default_target_path || "",
         }));
@@ -162,8 +173,12 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       ai_provider: data.aiProvider,
       ai_base_url: data.aiBaseUrl || null,
       ai_model: data.aiModel || null,
+      cloud_ai_provider: data.cloudAiProvider,
+      cloud_ai_model: data.cloudAiModel || null,
+      recognition_ai_enabled: data.recognitionAiEnabled,
     };
     if (data.aiApiKey) aiPayload.ai_api_key = data.aiApiKey;
+    if (data.cloudAiApiKey) aiPayload.cloud_ai_api_key = data.cloudAiApiKey;
     await updateSettings(aiPayload);
     try {
       const result = await testAiConnection();
@@ -190,12 +205,16 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         ai_provider: data.aiProvider,
         ai_base_url: data.aiBaseUrl || null,
         ai_model: data.aiModel || null,
+        cloud_ai_provider: data.cloudAiProvider,
+        cloud_ai_model: data.cloudAiModel || null,
+        recognition_ai_enabled: data.recognitionAiEnabled,
         default_source_path: data.sourcePath || null,
         default_target_path: data.targetPath || null,
         setup_completed: true,
       };
       if (data.tmdbKey) payload.tmdb_api_key = data.tmdbKey;
       if (data.aiApiKey) payload.ai_api_key = data.aiApiKey;
+      if (data.cloudAiApiKey) payload.cloud_ai_api_key = data.cloudAiApiKey;
       await updateSettings(payload);
       onComplete();
     } catch (err) {
@@ -422,6 +441,58 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       onChange={(e) => update({ aiModel: e.target.value })}
                     />
                   </label>
+                </>
+              ) : null}
+
+              <label>
+                <span>AI-assisted recognition</span>
+                <select
+                  value={data.recognitionAiEnabled ? "enabled" : "disabled"}
+                  onChange={(e) => update({ recognitionAiEnabled: e.target.value === "enabled" })}
+                >
+                  <option value="enabled">Enabled: require LLM preflight before analysis</option>
+                  <option value="disabled">Disabled: parser-only mode</option>
+                </select>
+                {!data.recognitionAiEnabled ? (
+                  <small className="muted">
+                    AI recognition is disabled. MediaForge will use only the deterministic parser, so recognition quality may be lower.
+                  </small>
+                ) : null}
+              </label>
+
+              {data.recognitionAiEnabled ? (
+                <>
+                  <label>
+                    Cloud fallback
+                    <select
+                      value={data.cloudAiProvider}
+                      onChange={(e) => update({ cloudAiProvider: e.target.value as "none" | "gemini" })}
+                    >
+                      <option value="gemini">Gemini</option>
+                      <option value="none">None</option>
+                    </select>
+                  </label>
+                  {data.cloudAiProvider === "gemini" ? (
+                    <>
+                      <label>
+                        Gemini API key
+                        <input
+                          type="password"
+                          value={data.cloudAiApiKey}
+                          onChange={(e) => update({ cloudAiApiKey: e.target.value })}
+                          placeholder="Leave empty to keep saved key"
+                        />
+                      </label>
+                      <label>
+                        Gemini model
+                        <input
+                          value={data.cloudAiModel}
+                          onChange={(e) => update({ cloudAiModel: e.target.value })}
+                          placeholder="gemini-2.0-flash"
+                        />
+                      </label>
+                    </>
+                  ) : null}
                 </>
               ) : null}
 

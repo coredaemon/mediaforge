@@ -1,16 +1,22 @@
 import json
-from typing import Protocol
+import time
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 import httpx
 
-from ..schemas.recognition import NormalizedTitle
+from ..schemas.recognition import LlmPreflightCheck, NormalizedTitle
 
-_TIMEOUT_SECONDS = 20.0
+_TIMEOUT_SECONDS = 90.0
+_PREFLIGHT_TEST = "mediaforge-preflight"
 
 
 class TitleNormalizerClient(Protocol):
     async def normalize(self, original_name: str, parser_title: str | None, parser_year: int | None) -> NormalizedTitle:
         """Return a normalized title suggestion for one media item."""
+
+    async def preflight(self, expected_provider: str) -> LlmPreflightCheck:
+        """Run a real generation request and validate the JSON response."""
 
 
 class OllamaTitleNormalizer:
@@ -30,6 +36,30 @@ class OllamaTitleNormalizer:
             response.raise_for_status()
             body = response.json().get("response", "{}")
         return _parse_normalized_json(body)
+
+    async def preflight(self, expected_provider: str = "local") -> LlmPreflightCheck:
+        started = time.perf_counter()
+        try:
+            payload = {
+                "model": self.model,
+                "prompt": _preflight_prompt(expected_provider),
+                "stream": False,
+                "format": "json",
+            }
+            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+                response = await client.post(f"{self.base_url}/api/generate", json=payload)
+                response.raise_for_status()
+                text = response.json().get("response", "")
+            return _validate_preflight_response(
+                text,
+                expected_provider=expected_provider,
+                provider="ollama",
+                model=self.model,
+                endpoint=self.base_url,
+                duration_ms=_duration_ms(started),
+            )
+        except Exception as exc:
+            return _failed_preflight("ollama", self.model, self.base_url, started, exc)
 
 
 class OpenAICompatibleTitleNormalizer:
@@ -51,6 +81,30 @@ class OpenAICompatibleTitleNormalizer:
             body = response.json()["choices"][0]["message"]["content"]
         return _parse_normalized_json(body)
 
+    async def preflight(self, expected_provider: str = "local") -> LlmPreflightCheck:
+        started = time.perf_counter()
+        try:
+            headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+            payload = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": _preflight_prompt(expected_provider)}],
+                "temperature": 0,
+            }
+            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+                response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                text = response.json()["choices"][0]["message"]["content"]
+            return _validate_preflight_response(
+                text,
+                expected_provider=expected_provider,
+                provider="openai-compatible",
+                model=self.model,
+                endpoint=self.base_url,
+                duration_ms=_duration_ms(started),
+            )
+        except Exception as exc:
+            return _failed_preflight("openai-compatible", self.model, self.base_url, started, exc)
+
 
 class GeminiTitleNormalizer:
     def __init__(self, api_key: str, model: str | None = None) -> None:
@@ -67,6 +121,27 @@ class GeminiTitleNormalizer:
             body = "".join(part.get("text", "") for part in parts)
         return _parse_normalized_json(body)
 
+    async def preflight(self, expected_provider: str = "gemini") -> LlmPreflightCheck:
+        started = time.perf_counter()
+        try:
+            payload = {"contents": [{"parts": [{"text": _preflight_prompt(expected_provider)}]}]}
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+            async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
+                response = await client.post(url, params={"key": self.api_key}, json=payload)
+                response.raise_for_status()
+                parts = response.json()["candidates"][0]["content"]["parts"]
+                text = "".join(part.get("text", "") for part in parts)
+            return _validate_preflight_response(
+                text,
+                expected_provider=expected_provider,
+                provider="gemini",
+                model=self.model,
+                endpoint="https://generativelanguage.googleapis.com/v1beta",
+                duration_ms=_duration_ms(started),
+            )
+        except Exception as exc:
+            return _failed_preflight("gemini", self.model, None, started, exc)
+
 
 def _parse_normalized_json(value: str) -> NormalizedTitle:
     start = value.find("{")
@@ -75,6 +150,107 @@ def _parse_normalized_json(value: str) -> NormalizedTitle:
         value = value[start : end + 1]
     data = json.loads(value)
     return NormalizedTitle.model_validate(data)
+
+
+def _preflight_prompt(expected_provider: str) -> str:
+    provider = "gemini" if expected_provider == "gemini" else "local"
+    return (
+        "You are MediaForge recognition preflight.\n"
+        "Return only valid JSON, no markdown:\n"
+        f'{{"ok":true,"provider":"{provider}","test":"{_PREFLIGHT_TEST}"}}'
+    )
+
+
+def _validate_preflight_response(
+    text: str,
+    expected_provider: str,
+    provider: str,
+    model: str | None,
+    endpoint: str | None,
+    duration_ms: int,
+) -> LlmPreflightCheck:
+    preview = _sanitize_preview(text)
+    parsed = _extract_json(text)
+    expected = "gemini" if expected_provider == "gemini" else "local"
+    if parsed.data is None:
+        return LlmPreflightCheck(
+            ok=False,
+            provider=provider,
+            model=model,
+            endpoint=endpoint,
+            duration_ms=duration_ms,
+            response_valid_json=False,
+            response_had_markdown=parsed.had_markdown,
+            response_preview=preview,
+            error="Response was not valid JSON.",
+            error_type="invalid_json",
+        )
+    ok = parsed.data.get("ok") is True
+    provider_ok = parsed.data.get("provider") == expected
+    test_ok = parsed.data.get("test") == _PREFLIGHT_TEST
+    return LlmPreflightCheck(
+        ok=ok and provider_ok and test_ok,
+        provider=provider,
+        model=model,
+        endpoint=endpoint,
+        duration_ms=duration_ms,
+        response_valid_json=True,
+        response_had_markdown=parsed.had_markdown,
+        response_preview=preview,
+        message=f"{provider} responded successfully" if ok and provider_ok and test_ok else None,
+        error=None if ok and provider_ok and test_ok else "Preflight JSON did not match expected fields.",
+        error_type=None if ok and provider_ok and test_ok else "unexpected_payload",
+    )
+
+
+def _failed_preflight(
+    provider: str,
+    model: str | None,
+    endpoint: str | None,
+    started: float,
+    exc: Exception,
+) -> LlmPreflightCheck:
+    return LlmPreflightCheck(
+        ok=False,
+        provider=provider,
+        model=model,
+        endpoint=endpoint,
+        duration_ms=_duration_ms(started),
+        response_valid_json=False,
+        error=str(exc),
+        error_type=exc.__class__.__name__,
+    )
+
+
+@dataclass
+class ParsedJson:
+    data: dict[str, Any] | None
+    had_markdown: bool
+
+
+def _extract_json(text: str) -> ParsedJson:
+    stripped = text.strip()
+    had_markdown = "```" in stripped
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start >= 0 and end >= start:
+        stripped = stripped[start : end + 1]
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        return ParsedJson(data=None, had_markdown=had_markdown)
+    return ParsedJson(data=data if isinstance(data, dict) else None, had_markdown=had_markdown)
+
+
+def _sanitize_preview(text: str) -> str:
+    preview = text.replace("\r", " ").replace("\n", " ").strip()
+    if len(preview) > 240:
+        preview = f"{preview[:237]}..."
+    return preview
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))
 
 
 def _prompt(original_name: str, parser_title: str | None, parser_year: int | None) -> str:

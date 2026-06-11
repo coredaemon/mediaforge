@@ -1,3 +1,6 @@
+import json
+import time
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.enums import MediaItemStatus, MediaType
@@ -16,6 +19,8 @@ from ..schemas.recognition import (
     RecognitionCorrectionCreate,
     RecognitionCorrectionRead,
     RecognitionNormalizeResult,
+    RecognitionPreflightResult,
+    LlmPreflightCheck,
 )
 from ..utils.media_name_parser import clean_title
 from .recognition_clients import (
@@ -90,6 +95,43 @@ class RecognitionService:
     async def resolve_with_gemini(self, scan_session_id: int) -> RecognitionNormalizeResult:
         return await self._normalize_scan_session(scan_session_id, use_gemini=True)
 
+    async def preflight(self) -> RecognitionPreflightResult:
+        settings = await self.settings.get_or_create()
+        if not settings.recognition_ai_enabled:
+            skipped = LlmPreflightCheck(
+                ok=True,
+                provider="disabled",
+                message="AI-assisted recognition is disabled.",
+            )
+            return RecognitionPreflightResult(ok=True, local=skipped, cloud=skipped)
+
+        local_client = await self._get_client(use_gemini=False)
+        cloud_client = await self._get_client(use_gemini=True)
+        local = (
+            await local_client.preflight("local")
+            if local_client
+            else LlmPreflightCheck(
+                ok=False,
+                provider=settings.ai_provider or "none",
+                model=settings.ai_model,
+                endpoint=settings.ai_base_url,
+                error="Local LLM is not configured.",
+                error_type="not_configured",
+            )
+        )
+        cloud = (
+            await cloud_client.preflight("gemini")
+            if cloud_client
+            else LlmPreflightCheck(
+                ok=False,
+                provider=settings.cloud_ai_provider or "none",
+                model=settings.cloud_ai_model,
+                error="Gemini cloud fallback is not configured.",
+                error_type="not_configured",
+            )
+        )
+        return RecognitionPreflightResult(ok=local.ok and cloud.ok, local=local, cloud=cloud)
+
     async def _normalize_scan_session(self, scan_session_id: int, use_gemini: bool) -> RecognitionNormalizeResult:
         scan_session = await self.scan_sessions.get(scan_session_id)
         if scan_session is None:
@@ -103,15 +145,55 @@ class RecognitionService:
         error_count = 0
 
         for item in items:
+            started = time.perf_counter()
             if item.status == MediaItemStatus.MATCHED:
+                self._mark_ai_diagnostics(
+                    item,
+                    use_gemini=use_gemini,
+                    status="skipped",
+                    duration_ms=0,
+                    error=None,
+                    response_valid_json=None,
+                    model=getattr(client, "model", None) if client else None,
+                )
                 skipped_count += 1
                 continue
             try:
                 rule_title = clean_title(item.parsed_title or item.original_title or "", remove_tokens=remove_tokens) or None
-                suggestion = await client.normalize(item.original_title or "", rule_title, item.year) if client else None
+                if client is None:
+                    self._mark_ai_diagnostics(
+                        item,
+                        use_gemini=use_gemini,
+                        status="failed",
+                        duration_ms=0,
+                        error="LLM client is not configured.",
+                        response_valid_json=False,
+                        model=None,
+                    )
+                    error_count += 1
+                    continue
+                suggestion = await client.normalize(item.original_title or "", rule_title, item.year)
                 self._apply_suggestion(item, suggestion, rule_title=rule_title, use_gemini=use_gemini)
+                self._mark_ai_diagnostics(
+                    item,
+                    use_gemini=use_gemini,
+                    status="success",
+                    duration_ms=_duration_ms(started),
+                    error=None,
+                    response_valid_json=True,
+                    model=getattr(client, "model", None),
+                )
                 normalized_count += 1
-            except Exception:
+            except Exception as exc:
+                self._mark_ai_diagnostics(
+                    item,
+                    use_gemini=use_gemini,
+                    status="failed",
+                    duration_ms=_duration_ms(started),
+                    error=str(exc),
+                    response_valid_json=not isinstance(exc, json.JSONDecodeError),
+                    model=getattr(client, "model", None) if client else None,
+                )
                 error_count += 1
 
         await self.session.commit()
@@ -127,8 +209,8 @@ class RecognitionService:
         if use_gemini:
             if self.gemini_client is not None:
                 return self.gemini_client
-            if settings.ai_provider == "gemini" and settings.ai_api_key:
-                return GeminiTitleNormalizer(settings.ai_api_key, settings.ai_model)
+            if settings.cloud_ai_provider == "gemini" and settings.cloud_ai_api_key:
+                return GeminiTitleNormalizer(settings.cloud_ai_api_key, settings.cloud_ai_model)
             return None
         if self.local_client is not None:
             return self.local_client
@@ -181,6 +263,29 @@ class RecognitionService:
             item.media_type = MediaType(media_type)
         item.tmdb_queries = _dedupe_queries([*(queries or []), clean, previous_parser_title, item.original_title])
 
+    def _mark_ai_diagnostics(
+        self,
+        item: MediaItem,
+        use_gemini: bool,
+        status: str,
+        duration_ms: int | None,
+        error: str | None,
+        response_valid_json: bool | None,
+        model: str | None,
+    ) -> None:
+        if use_gemini:
+            item.gemini_status = status
+            item.gemini_duration_ms = duration_ms
+            item.gemini_error = error
+            item.gemini_response_valid_json = response_valid_json
+            item.gemini_model = model
+        else:
+            item.local_ai_status = status
+            item.local_ai_duration_ms = duration_ms
+            item.local_ai_error = error
+            item.local_ai_response_valid_json = response_valid_json
+            item.local_ai_model = model
+
 
 def _correction_read(correction: RecognitionCorrection) -> RecognitionCorrectionRead:
     return RecognitionCorrectionRead(
@@ -211,3 +316,7 @@ def _dedupe_queries(values: list[str | None]) -> list[str]:
 
 class MediaItemNotFoundError(LookupError):
     """Raised when a media item id does not exist."""
+
+
+def _duration_ms(started: float) -> int:
+    return max(0, int((time.perf_counter() - started) * 1000))

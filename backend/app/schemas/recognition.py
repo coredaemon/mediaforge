@@ -53,3 +53,23 @@ class NormalizedTitle(BaseModel):
     junk_tokens: list[str] = Field(default_factory=list)
     explanation: str | None = None
     tmdb_queries: list[str] = Field(default_factory=list)
+
+
+class LlmPreflightCheck(BaseModel):
+    ok: bool
+    provider: str | None = None
+    model: str | None = None
+    endpoint: str | None = None
+    duration_ms: int = 0
+    response_valid_json: bool = False
+    response_had_markdown: bool = False
+    response_preview: str | None = None
+    message: str | None = None
+    error: str | None = None
+    error_type: str | None = None
+
+
+class RecognitionPreflightResult(BaseModel):
+    ok: bool
+    local: LlmPreflightCheck
+    cloud: LlmPreflightCheck

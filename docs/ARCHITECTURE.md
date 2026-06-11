@@ -75,20 +75,25 @@ The pipeline is intentionally staged: discovery and planning can be inspected be
 The current recognition pipeline is:
 
 ```text
-Discovery -> Deterministic parser -> Local LLM normalization -> TMDB search pass #1
+LLM Preflight -> Discovery -> Deterministic parser -> Local LLM normalization -> TMDB search pass #1
           -> Gemini fallback -> TMDB search pass #2 -> Human review -> Recognition Memory
 ```
 
 Implemented endpoints:
+- `POST /recognition/preflight`
 - `POST /scan-sessions/{id}/normalize-local-ai`
 - `POST /scan-sessions/{id}/resolve-with-gemini`
 - `POST /items/{item_id}/corrections`
 - `GET /recognition-memory/corrections`
 - `GET /recognition-memory/token-rules`
 
+`/recognition/preflight` sends real generation requests to the configured local LLM and Gemini cloud fallback. It validates that the model returns JSON with `ok: true`, the expected provider (`local` or `gemini`), and `test: "mediaforge-preflight"`. If AI-assisted recognition is enabled and either side fails, the UI stops the analysis before discovery/parse/TMDB and shows the failed provider, duration, model, error type, JSON validity, and sanitized response preview. API keys are never included in responses or logs.
+
 Local AI normalization reads `AppSettings.ai_provider`, `ai_base_url`, `ai_model`, and `ai_api_key` when needed. Supported normalization clients are Ollama, LM Studio/OpenAI-compatible endpoints, custom OpenAI-compatible endpoints, and Gemini fallback. API keys are passed only to outgoing requests and are never returned by read endpoints.
 
 Manual corrections update the media item, save a correction row, and upsert remove-token rules. Token rules are applied on later normalization passes so names like release groups, streaming tags, and team names can be removed consistently.
+
+Each `MediaItem` stores recognition diagnostics for local AI and Gemini: status (`not_run`, `success`, `failed`, `skipped`), duration, model, JSON validity, and sanitized error text. The UI shows these diagnostics next to parser/AI/Gemini titles and TMDB query priorities.
 
 ## Dry-run Planning Layer
 

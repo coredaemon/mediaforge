@@ -124,6 +124,25 @@ npm run build           # production build
 2. В мастере выберите **LM Studio**, нажмите **Найти модели**
 3. Endpoint по умолчанию: `http://127.0.0.1:1234`
 
+## AI Preflight
+
+AI-assisted recognition starts with `POST /recognition/preflight`. MediaForge sends real short generation requests before analysis:
+
+- local LLM: Ollama `/api/generate` or an OpenAI-compatible `/v1/chat/completions` endpoint
+- cloud LLM: Gemini `generateContent`
+
+The prompt asks the model to return strict JSON:
+
+```json
+{"ok":true,"provider":"local","test":"mediaforge-preflight"}
+```
+
+For Gemini the expected provider is `gemini`. MediaForge parses the response, validates `ok === true`, validates `test === "mediaforge-preflight"`, and checks the provider. Markdown-wrapped JSON is extracted but reported with `response_had_markdown: true`.
+
+If AI-assisted recognition is enabled, analysis does not continue unless both local and cloud preflight checks pass. If Ollama is down, the selected model is unavailable, Gemini is missing, the key is invalid, or the model returns invalid JSON, the UI stops the pipeline and shows the failed provider, model, duration, error type, and a sanitized response preview. Parser-only mode is available only when AI-assisted recognition is explicitly disabled in settings.
+
+Per-item diagnostics are saved for local AI and Gemini normalization: status, duration, model, JSON validity, and sanitized error text. These diagnostics are shown in the session review cards so it is visible whether AI actually ran.
+
 ## Workflow через UI
 
 1. Откройте `http://127.0.0.1:5173`

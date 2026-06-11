@@ -15,6 +15,7 @@ import {
   matchTmdbSession,
   normalizeLocalAi,
   parseSession,
+  recognitionPreflight,
   resolveWithGemini,
   selectTmdbCandidate,
 } from "../api";
@@ -34,6 +35,7 @@ import type {
   MediaItem,
   OperationPlan,
   PlanOperation,
+  RecognitionPreflightResult,
   ScanSession,
   TmdbMatchCandidate,
 } from "../types";
@@ -41,6 +43,7 @@ import type {
 type StepStatus = "pending" | "running" | "done" | "error";
 
 const analysisSteps: { key: string; label: string }[] = [
+  { key: "preflight", label: "AI preflight" },
   { key: "discover", label: "Сканирование файлов" },
   { key: "parse", label: "Распознавание названий" },
   { key: "local-ai", label: "Local AI cleanup" },
@@ -132,6 +135,50 @@ function OperationPreview({ operation }: { operation: PlanOperation }) {
   );
 }
 
+function formatPreflightError(result: RecognitionPreflightResult): string {
+  if (!result.local.ok) {
+    return result.local.error ?? "Local LLM did not respond. Check that Ollama is running, the model is selected, and the endpoint is reachable.";
+  }
+  if (!result.cloud.ok) {
+    return result.cloud.error ?? "Gemini did not respond. Check the API key and cloud AI settings.";
+  }
+  return "AI preflight failed.";
+}
+
+function formatCheckStatus(check: RecognitionPreflightResult["local"] | null | undefined): string {
+  if (!check) return "not run";
+  if (check.ok) return `works, ${check.duration_ms} ms`;
+  if (check.error_type === "invalid_json") return "response received, JSON invalid";
+  return check.error_type ? `error: ${check.error_type}` : "error";
+}
+
+function PreflightPanel({ result, status }: { result: RecognitionPreflightResult | null; status: StepStatus }) {
+  return (
+    <div className="preflight-panel">
+      <div className="section-heading">
+        <strong>AI preflight</strong>
+        <StepBadge status={status} />
+      </div>
+      <div className="preflight-grid">
+        <div>
+          <span>Local LLM</span>
+          <strong>{formatCheckStatus(result?.local)}</strong>
+          {result?.local.model ? <small>{result.local.model}</small> : null}
+          {result?.local.endpoint ? <small>{result.local.endpoint}</small> : null}
+          {result?.local.error ? <small className="error-text">{result.local.error}</small> : null}
+        </div>
+        <div>
+          <span>Cloud LLM</span>
+          <strong>{formatCheckStatus(result?.cloud)}</strong>
+          {result?.cloud.model ? <small>{result.cloud.model}</small> : null}
+          {result?.cloud.provider ? <small>{result.cloud.provider}</small> : null}
+          {result?.cloud.error ? <small className="error-text">{result.cloud.error}</small> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function SessionDetailPage() {
   const { sessionId } = useParams();
   const numId = Number(sessionId);
@@ -145,6 +192,7 @@ export function SessionDetailPage() {
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<TmdbMatchCandidate[]>([]);
   const [stepStatus, setStepStatus] = useState<Record<string, StepStatus>>({
+    preflight: "pending",
     discover: "pending",
     parse: "pending",
     "local-ai": "pending",
@@ -157,6 +205,7 @@ export function SessionDetailPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [preflightResult, setPreflightResult] = useState<RecognitionPreflightResult | null>(null);
 
   const latestPlanId = plans[0]?.id ?? null;
 
@@ -244,6 +293,7 @@ export function SessionDetailPage() {
     setError(null);
     setActionLoading("analysis");
     const nextStatus: Record<string, StepStatus> = {
+      preflight: "pending",
       discover: "pending",
       parse: "pending",
       "local-ai": "pending",
@@ -263,6 +313,13 @@ export function SessionDetailPage() {
     };
 
     try {
+      await runStep("preflight", async () => {
+        const result = await recognitionPreflight();
+        setPreflightResult(result);
+        if (!result.ok) {
+          throw new ApiError(400, formatPreflightError(result));
+        }
+      });
       await runStep("discover", () => discoverSession(numId));
       await runStep("parse", () => parseSession(numId));
       await runStep("local-ai", () => normalizeLocalAi(numId));
@@ -354,6 +411,7 @@ export function SessionDetailPage() {
             {actionLoading === "analysis" ? "Анализ выполняется..." : "Начать анализ"}
           </button>
         </div>
+        <PreflightPanel result={preflightResult} status={stepStatus.preflight ?? "pending"} />
         <div className="analysis-steps">
           {analysisSteps.map((step) => (
             <div key={step.key} className="analysis-step">
@@ -595,14 +653,31 @@ function RecognitionEvidence({ item }: { item: MediaItem }) {
   return (
     <div className="recognition-evidence">
       <span>Parser: {fmt(item.parsed_title)} {item.year ? `(${item.year})` : ""}</span>
-      <span>Local AI: {fmt(item.ai_clean_title)} {formatPercent(item.ai_confidence)}</span>
-      <span>Gemini: {fmt(item.gemini_clean_title)} {formatPercent(item.gemini_confidence)}</span>
+      <span>Local AI: {formatAiStatus(item.local_ai_status, item.local_ai_response_valid_json)}</span>
+      <span>Local AI duration: {fmt(item.local_ai_duration_ms)} ms</span>
+      <span>Local AI model: {fmt(item.local_ai_model)}</span>
+      <span>Local AI result: {fmt(item.ai_clean_title)} {formatPercent(item.ai_confidence)}</span>
+      {item.local_ai_error ? <span className="error-text">Local AI error: {item.local_ai_error}</span> : null}
+      <span>Gemini: {formatAiStatus(item.gemini_status, item.gemini_response_valid_json)}</span>
+      <span>Gemini duration: {fmt(item.gemini_duration_ms)} ms</span>
+      <span>Gemini model: {fmt(item.gemini_model)}</span>
+      <span>Gemini result: {fmt(item.gemini_clean_title)} {formatPercent(item.gemini_confidence)}</span>
+      {item.gemini_error ? <span className="error-text">Gemini error: {item.gemini_error}</span> : null}
       {item.tmdb_queries?.length ? <span>TMDB queries: {item.tmdb_queries.join(", ")}</span> : null}
       {item.ai_junk_tokens?.length ? <span>Removed tokens: {item.ai_junk_tokens.join(", ")}</span> : null}
       {item.ai_explanation ? <span>{item.ai_explanation}</span> : null}
       {item.gemini_explanation ? <span>{item.gemini_explanation}</span> : null}
     </div>
   );
+}
+
+function formatAiStatus(status: string | null, validJson: boolean | null): string {
+  if (!status || status === "not_run") return "not run";
+  if (status === "success") return "success";
+  if (status === "skipped") return "skipped";
+  if (status === "failed" && validJson === false) return "response received, JSON invalid or call failed";
+  if (status === "failed") return "error";
+  return status;
 }
 
 function CorrectionForm({

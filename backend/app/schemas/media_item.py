@@ -33,6 +33,16 @@ class MediaItemRead(BaseModel):
     gemini_junk_tokens: list[str] | None = None
     gemini_explanation: str | None = None
     tmdb_queries: list[str] | None = None
+    local_ai_status: str | None = None
+    local_ai_duration_ms: int | None = None
+    local_ai_error: str | None = None
+    local_ai_response_valid_json: bool | None = None
+    local_ai_model: str | None = None
+    gemini_status: str | None = None
+    gemini_duration_ms: int | None = None
+    gemini_error: str | None = None
+    gemini_response_valid_json: bool | None = None
+    gemini_model: str | None = None
     confidence: float | None = None
     needs_review: bool
     created_at: datetime

@@ -11,6 +11,7 @@ import type {
   RecognitionCorrection,
   RecognitionCorrectionCreate,
   RecognitionNormalizeResult,
+  RecognitionPreflightResult,
   RecognitionTokenRule,
   ScanSession,
   ScanSessionCreate,
@@ -123,6 +124,10 @@ export function normalizeLocalAi(sessionId: number): Promise<RecognitionNormaliz
 
 export function resolveWithGemini(sessionId: number): Promise<RecognitionNormalizeResult> {
   return request<RecognitionNormalizeResult>(`/scan-sessions/${sessionId}/resolve-with-gemini`, { method: "POST" });
+}
+
+export function recognitionPreflight(): Promise<RecognitionPreflightResult> {
+  return request<RecognitionPreflightResult>("/recognition/preflight", { method: "POST" });
 }
 
 export function createPlan(sessionId: number, force = false): Promise<OperationPlan> {

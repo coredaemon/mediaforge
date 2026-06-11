@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.enums import MediaItemStatus, MediaType
 from backend.app.models.media_item import MediaItem
 from backend.app.repositories.media_item_repository import MediaItemRepository
+from backend.app.repositories.app_settings_repository import AppSettingsRepository
 from backend.app.repositories.recognition_memory_repository import RecognitionMemoryRepository
 from backend.app.schemas.recognition import NormalizedTitle, RecognitionCorrectionCreate
 from backend.app.schemas.tmdb import TmdbSearchResult
@@ -79,6 +80,10 @@ async def test_local_ai_normalization_updates_query_fields(db_session: AsyncSess
     assert refreshed.ai_clean_title == "In The Grey"
     assert refreshed.ai_year == 2026
     assert refreshed.ai_junk_tokens == ["AMZN", "New", "Team"]
+    assert refreshed.local_ai_status == "success"
+    assert refreshed.local_ai_duration_ms is not None
+    assert refreshed.local_ai_response_valid_json is True
+    assert refreshed.local_ai_model == "fake-model"
     assert refreshed.tmdb_queries == [
         "In The Grey",
         "In The Grey2026 AMZN New Team",
@@ -103,9 +108,94 @@ async def test_gemini_failure_is_counted_without_breaking_pipeline(db_session: A
     result = await RecognitionService(db_session, gemini_client=FakeTitleNormalizer(fail=True)).resolve_with_gemini(
         scan_session.id
     )
+    item = (await MediaItemRepository(db_session).list_by_scan_session(scan_session.id))[0]
 
     assert result.normalized_count == 0
     assert result.error_count == 1
+    assert item.gemini_status == "failed"
+    assert item.gemini_error == "normalizer failed"
+
+
+async def test_preflight_success_with_fake_local_and_cloud_clients(db_session: AsyncSession) -> None:
+    result = await RecognitionService(
+        db_session,
+        local_client=FakeTitleNormalizer(),
+        gemini_client=FakeTitleNormalizer(),
+    ).preflight()
+
+    assert result.ok
+    assert result.local.duration_ms == 7
+    assert result.cloud.duration_ms == 7
+    assert result.local.response_valid_json
+    assert result.cloud.response_valid_json
+
+
+async def test_preflight_fails_if_local_connection_fails(db_session: AsyncSession) -> None:
+    result = await RecognitionService(
+        db_session,
+        local_client=FakeTitleNormalizer(fail=True),
+        gemini_client=FakeTitleNormalizer(),
+    ).preflight()
+
+    assert not result.ok
+    assert not result.local.ok
+    assert result.local.error_type == "ConnectError"
+
+
+async def test_preflight_fails_if_local_returns_invalid_json(db_session: AsyncSession) -> None:
+    result = await RecognitionService(
+        db_session,
+        local_client=FakeTitleNormalizer(preflight_valid_json=False),
+        gemini_client=FakeTitleNormalizer(),
+    ).preflight()
+
+    assert not result.ok
+    assert not result.local.response_valid_json
+
+
+async def test_preflight_fails_if_cloud_connection_fails(db_session: AsyncSession) -> None:
+    result = await RecognitionService(
+        db_session,
+        local_client=FakeTitleNormalizer(),
+        gemini_client=FakeTitleNormalizer(fail=True),
+    ).preflight()
+
+    assert not result.ok
+    assert not result.cloud.ok
+    assert result.cloud.error_type == "ConnectError"
+
+
+async def test_preflight_fails_if_cloud_returns_invalid_json(db_session: AsyncSession) -> None:
+    result = await RecognitionService(
+        db_session,
+        local_client=FakeTitleNormalizer(),
+        gemini_client=FakeTitleNormalizer(preflight_valid_json=False),
+    ).preflight()
+
+    assert not result.ok
+    assert not result.cloud.response_valid_json
+
+
+async def test_preflight_does_not_expose_saved_api_keys(db_session: AsyncSession) -> None:
+    await AppSettingsRepository(db_session).update(
+        {
+            "ai_provider": "ollama",
+            "ai_model": "gemma",
+            "cloud_ai_provider": "gemini",
+            "cloud_ai_api_key": "fake-cloud-key-that-must-not-leak",
+            "cloud_ai_model": "gemini-test",
+        }
+    )
+    await db_session.commit()
+
+    result = await RecognitionService(
+        db_session,
+        local_client=FakeTitleNormalizer(),
+        gemini_client=FakeTitleNormalizer(),
+    ).preflight()
+    serialized = result.model_dump_json()
+
+    assert "fake-cloud-key-that-must-not-leak" not in serialized
 
 
 async def test_tmdb_uses_ai_query_before_parser_title(db_session: AsyncSession, tmp_path) -> None:
