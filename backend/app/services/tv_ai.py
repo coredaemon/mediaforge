@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 from typing import Any
 
@@ -87,6 +89,7 @@ class TvCloudAuditService:
 
 
 def normalize_tv_grouping(value: Any, context: TvFolderContext) -> dict[str, Any]:
+    value = _coerce_json_object(value)
     if not isinstance(value, dict):
         return _deterministic_grouping(context)
     shows = value.get("shows")
@@ -99,6 +102,7 @@ def normalize_tv_grouping(value: Any, context: TvFolderContext) -> dict[str, Any
 
 
 def normalize_tv_audit(value: Any, grouping: dict[str, Any]) -> dict[str, Any]:
+    value = _coerce_json_object(value)
     if not isinstance(value, dict):
         return _identity_audit(grouping)
     shows = value.get("shows")
@@ -169,6 +173,25 @@ def _normalize_audit_show(show: dict[str, Any]) -> dict[str, Any]:
         "issues": _string_list(show.get("issues")),
         "manual_review_required": bool(show.get("manual_review_required", False)),
     }
+
+
+def _coerce_json_object(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(?P<body>.*?)```", text, re.I | re.S)
+    if fenced:
+        text = fenced.group("body").strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        return json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
 
 
 def _deterministic_grouping(context: TvFolderContext) -> dict[str, Any]:
