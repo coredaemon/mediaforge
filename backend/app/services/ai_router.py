@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..repositories.app_settings_repository import AppSettingsRepository
-from ..utils.ai_errors import sanitize_error_text
+from ..utils.ai_errors import classify_error_type, humanize_ai_error, sanitize_error_text
 from .openrouter_client import OPENROUTER_BASE_URL, OpenRouterClient
 
 AiQualityGate = Callable[[dict[str, Any]], tuple[bool, str | None]]
@@ -18,6 +18,7 @@ class AiModelAttempt:
     ok: bool
     duration_ms: int
     error: str | None = None
+    human_message: str | None = None
     response_valid_json: bool = False
 
 
@@ -61,6 +62,7 @@ class AiChainExecutor:
                             ok=False,
                             duration_ms=chat.duration_ms,
                             error=last_error,
+                            human_message="Модель ответила не JSON. Пробуем следующую модель в цепочке.",
                             response_valid_json=False,
                         )
                     )
@@ -75,6 +77,7 @@ class AiChainExecutor:
                                 ok=False,
                                 duration_ms=chat.duration_ms,
                                 error=last_error,
+                                human_message="Ответ модели не прошел проверку качества. Пробуем следующую модель.",
                                 response_valid_json=True,
                             )
                         )
@@ -93,12 +96,14 @@ class AiChainExecutor:
                 )
             except Exception as exc:
                 last_error = sanitize_error_text(str(exc))
+                human_message = humanize_ai_error(last_error, classify_error_type(last_error))
                 attempts.append(
                     AiModelAttempt(
                         model=model,
                         ok=False,
                         duration_ms=max(0, int((time.perf_counter() - model_started) * 1000)),
                         error=last_error,
+                        human_message=f"{human_message} Пробуем следующую модель в цепочке.",
                     )
                 )
         return AiRouterResult(
@@ -106,7 +111,7 @@ class AiChainExecutor:
             provider="openrouter",
             model=None,
             attempted_models=attempts,
-            human_message="OpenRouter model chain failed; MediaForge will use legacy or deterministic fallback.",
+            human_message="Цепочка OpenRouter не сработала. MediaForge перейдет к резервной или детерминированной обработке.",
             technical_error=last_error,
             duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
         )

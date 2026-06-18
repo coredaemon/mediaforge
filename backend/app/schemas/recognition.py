@@ -69,6 +69,7 @@ class LlmPreflightCheck(BaseModel):
     error_type: str | None = None
     human_message: str | None = None
     attempts: int = 1
+    attempted_models: list[dict] = Field(default_factory=list)
     retryable: bool = False
 
 

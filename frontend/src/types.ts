@@ -481,6 +481,14 @@ export interface LlmPreflightCheck {
   error_type: string | null;
   human_message?: string | null;
   attempts?: number;
+  attempted_models?: {
+    model: string;
+    ok: boolean;
+    duration_ms: number;
+    error?: string | null;
+    human_message?: string | null;
+    response_valid_json?: boolean;
+  }[];
   retryable?: boolean;
 }
 
@@ -545,6 +553,8 @@ export interface CloudModelsRequest {
 export interface CloudAiTestRequest {
   provider: string;
   model: string;
+  models?: string[] | null;
+  stage?: string | null;
   api_key?: string | null;
   base_url?: string | null;
 }

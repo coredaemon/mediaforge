@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from backend.app.repositories.app_settings_repository import AppSettingsRepository
-from backend.app.schemas.settings import AppSettingsUpdate, CloudModelsRequest
+from backend.app.schemas.settings import AppSettingsUpdate, CloudAiTestRequest, CloudModelsRequest
 from backend.app.services.ai_router import AiChainExecutor
 from backend.app.services.openrouter_client import OpenRouterClient
 from backend.app.services.settings_service import SettingsService
@@ -126,6 +126,90 @@ async def test_ai_chain_executor_falls_back_on_invalid_json(monkeypatch) -> None
     assert result.model == "good"
     assert calls == ["bad", "good"]
     assert len(result.attempted_models) == 2
+
+
+async def test_ai_chain_executor_falls_back_after_404(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_chat_json(self, *, model, messages):
+        from backend.app.services.openrouter_client import OpenRouterChatResult
+
+        calls.append(model)
+        if model == "missing":
+            raise RuntimeError("404 model not found for key=secret")
+        return OpenRouterChatResult(model=model, content='{"ok": true}', attempts=1, duration_ms=3, raw_json={})
+
+    monkeypatch.setattr(OpenRouterClient, "chat_json", fake_chat_json)
+    result = await AiChainExecutor(OpenRouterClient("or-key")).run_json(
+        models=["missing", "good"],
+        messages=[{"role": "user", "content": "x"}],
+        quality_gate=lambda data: (data.get("ok") is True, "not ok"),
+    )
+
+    assert result.ok is True
+    assert result.model == "good"
+    assert calls == ["missing", "good"]
+    assert result.attempted_models[0].ok is False
+    assert "secret" not in (result.attempted_models[0].error or "")
+
+
+async def test_ai_chain_executor_falls_back_after_429(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_chat_json(self, *, model, messages):
+        from backend.app.services.openrouter_client import OpenRouterChatResult
+
+        calls.append(model)
+        if model == "limited":
+            raise RuntimeError("429 rate limit exceeded")
+        return OpenRouterChatResult(model=model, content='{"ok": true}', attempts=1, duration_ms=4, raw_json={})
+
+    monkeypatch.setattr(OpenRouterClient, "chat_json", fake_chat_json)
+    result = await AiChainExecutor(OpenRouterClient("or-key")).run_json(
+        models=["limited", "backup"],
+        messages=[{"role": "user", "content": "x"}],
+        quality_gate=lambda data: (data.get("ok") is True, "not ok"),
+    )
+
+    assert result.ok is True
+    assert result.model == "backup"
+    assert calls == ["limited", "backup"]
+    assert result.attempted_models[0].human_message is not None
+
+
+async def test_openrouter_cloud_test_uses_full_chain(db_session, monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_chat_json(self, *, model, messages):
+        from backend.app.services.openrouter_client import OpenRouterChatResult
+
+        calls.append(model)
+        if model == "missing":
+            raise RuntimeError("404 model not found")
+        return OpenRouterChatResult(
+            model=model,
+            content='{"ok": true, "test": "mediaforge-preflight"}',
+            attempts=1,
+            duration_ms=5,
+            raw_json={},
+        )
+
+    monkeypatch.setattr(OpenRouterClient, "chat_json", fake_chat_json)
+    result = await SettingsService(db_session).test_cloud_ai(
+        CloudAiTestRequest(
+            provider="openrouter",
+            model="missing",
+            models=["missing", "backup"],
+            stage="fast",
+            api_key="or-key",
+        )
+    )
+
+    assert result.ok is True
+    assert result.model == "backup"
+    assert result.attempts == 2
+    assert calls == ["missing", "backup"]
+    assert result.attempted_models[0]["ok"] is False
 
 
 async def test_ai_chain_executor_returns_human_message_when_all_models_fail(monkeypatch) -> None:

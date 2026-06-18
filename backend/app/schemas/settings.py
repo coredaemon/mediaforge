@@ -93,6 +93,8 @@ class CloudModelsResult(BaseModel):
 class CloudAiTestRequest(BaseModel):
     provider: str
     model: str
+    models: list[str] | None = None
+    stage: str | None = None
     api_key: str | None = None
     base_url: str | None = None
 

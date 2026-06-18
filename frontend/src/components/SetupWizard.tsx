@@ -5,14 +5,13 @@ import {
   getOllamaModels,
   getSettings,
   recognitionPreflight,
-  testAiConnection,
   testCloudAi,
   testTmdbConnection,
   updateSettings,
 } from "../api";
 import { humanizeAiError } from "../aiLabels";
 import { t } from "../i18n";
-import type { AppSettingsRead, LlmPreflightCheck } from "../types";
+import type { AppSettingsRead, CloudModel, LlmPreflightCheck } from "../types";
 import { FolderPickerModal } from "./FolderPickerModal";
 
 type AiProvider = "none" | "gemini" | "ollama" | "lmstudio" | "custom";
@@ -53,6 +52,16 @@ interface CloudTestState {
   status: TestUiStatus;
   message: string;
   technicalError?: string;
+  attempts?: ChainAttempt[];
+}
+
+interface ChainAttempt {
+  model: string;
+  ok: boolean;
+  durationMs: number;
+  error?: string | null;
+  humanMessage?: string | null;
+  responseValidJson?: boolean;
 }
 
 function emptyCloudTest(): CloudTestState {
@@ -60,16 +69,27 @@ function emptyCloudTest(): CloudTestState {
 }
 
 function cloudTestFromResult(result: LlmPreflightCheck): CloudTestState {
+  const attempts =
+    result.attempted_models?.map((attempt) => ({
+      model: attempt.model,
+      ok: attempt.ok,
+      durationMs: attempt.duration_ms,
+      error: attempt.error,
+      humanMessage: attempt.human_message,
+      responseValidJson: attempt.response_valid_json,
+    })) ?? [];
   if (result.ok) {
     return {
       status: "success",
-      message: `Подключение успешно (${result.duration_ms} мс, попыток: ${result.attempts ?? 1})`,
+      message: result.human_message ?? `Подключение успешно (${result.duration_ms} мс, попыток: ${result.attempts ?? 1})`,
+      attempts,
     };
   }
   return {
     status: "error",
     message: result.human_message ?? humanizeAiError(result.error, result.error_type),
     technicalError: result.error ?? undefined,
+    attempts,
   };
 }
 
@@ -84,7 +104,100 @@ function CloudTestMessage({ test }: { test: CloudTestState }) {
           <pre>{test.technicalError}</pre>
         </details>
       ) : null}
+      {test.attempts && test.attempts.length > 0 ? (
+        <ul className="chain-attempts">
+          {test.attempts.map((attempt, index) => (
+            <li key={`${attempt.model}-${index}`} className={attempt.ok ? "ok" : "failed"}>
+              <strong>{attempt.ok ? "Успешно" : "Пропущено"}:</strong> {attempt.model}
+              <span className="muted"> {attempt.durationMs} мс</span>
+              {!attempt.ok && attempt.humanMessage ? <span> — {attempt.humanMessage}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
+  );
+}
+
+interface ModelSearchSelectProps {
+  label: string;
+  value: string;
+  models: CloudModel[];
+  placeholder: string;
+  onChange: (value: string) => void;
+}
+
+function ModelSearchSelect({ label, value, models, placeholder, onChange }: ModelSearchSelectProps) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "free" | "paid">("all");
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleModels = models
+    .filter((model) => {
+      if (filter === "free" && !model.is_free) return false;
+      if (filter === "paid" && model.is_free) return false;
+      if (!normalizedQuery) return true;
+      return [model.id, model.label, model.display_name ?? "", model.provider ?? ""]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalizedQuery);
+    })
+    .slice(0, 50);
+  const knownValue = !value || models.length === 0 || models.some((model) => model.id === value);
+
+  return (
+    <label className="model-search">
+      <span>{label}</span>
+      <input
+        value={value || query}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          onChange(nextValue);
+          setQuery(nextValue);
+        }}
+        placeholder={placeholder}
+      />
+      <div className="model-filter-row" aria-label="Фильтр моделей">
+        <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
+          Все
+        </button>
+        <button type="button" className={filter === "free" ? "active" : ""} onClick={() => setFilter("free")}>
+          Бесплатные
+        </button>
+        <button type="button" className={filter === "paid" ? "active" : ""} onClick={() => setFilter("paid")}>
+          Платные
+        </button>
+      </div>
+      {models.length === 0 ? (
+        <small className="muted">Модели ещё не загружены. Нажмите «Найти модели» или введите model id вручную.</small>
+      ) : null}
+      {value && !knownValue ? (
+        <small className="muted">Этой модели нет в загруженном списке. Она будет сохранена как ручной model id.</small>
+      ) : null}
+      {visibleModels.length > 0 ? (
+        <div className="model-results">
+          {visibleModels.map((model) => (
+            <button
+              key={model.id}
+              type="button"
+              className={model.id === value ? "selected" : ""}
+              onClick={() => {
+                onChange(model.id);
+                setQuery("");
+              }}
+            >
+              <span>{model.label || model.id}</span>
+              <small>
+                {model.provider ? `${model.provider} · ` : ""}
+                {model.is_free ? "бесплатная" : "платная"}
+                {model.context_length ? ` · ${model.context_length.toLocaleString("ru-RU")} токенов` : ""}
+              </small>
+            </button>
+          ))}
+        </div>
+      ) : models.length > 0 ? (
+        <small className="muted">По этому запросу моделей не найдено. Можно ввести model id вручную.</small>
+      ) : null}
+    </label>
   );
 }
 
@@ -180,13 +293,12 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [tmdbTestResult, setTmdbTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [tmdbTesting, setTmdbTesting] = useState(false);
 
-  const [aiTestResult, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [aiTesting, setAiTesting] = useState(false);
+  const [, setAiTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [aiModels, setAiModels] = useState<string[]>([]);
   const [aiSearching, setAiSearching] = useState(false);
   const [cloudModels, setCloudModels] = useState<string[]>([]);
   const [cloudFallbackModels, setCloudFallbackModels] = useState<string[]>([]);
-  const [openrouterModels, setOpenrouterModels] = useState<string[]>([]);
+  const [openrouterModels, setOpenrouterModels] = useState<CloudModel[]>([]);
   const [openrouterSearching, setOpenrouterSearching] = useState(false);
   const [openrouterFastTest, setOpenrouterFastTest] = useState<CloudTestState>(emptyCloudTest());
   const [openrouterSmartTest, setOpenrouterSmartTest] = useState<CloudTestState>(emptyCloudTest());
@@ -249,21 +361,6 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     }
   }
 
-  async function handleTestAi() {
-    setAiTesting(true);
-    setAiTestResult(null);
-    try {
-      await persistAiSettingsForTest();
-      const result = await testAiConnection();
-      setAiTestResult(result);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Неизвестная ошибка при проверке AI";
-      setAiTestResult({ success: false, message: msg });
-    } finally {
-      setAiTesting(false);
-    }
-  }
-
   async function handleSearchCloudFallbackModels() {
     setCloudFallbackSearching(true);
     setCloudFallbackModels([]);
@@ -321,7 +418,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         api_key: data.openrouterApiKey || null,
         base_url: data.openrouterBaseUrl || null,
       });
-      setOpenrouterModels(result.models.map((model) => model.id));
+      setOpenrouterModels(result.models);
       if (!result.success) {
         setOpenrouterFastTest({
           status: "error",
@@ -352,6 +449,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       const result = await testCloudAi({
         provider: "openrouter",
         model: chain[0] ?? "",
+        models: chain,
+        stage,
         api_key: data.openrouterApiKey || null,
         base_url: data.openrouterBaseUrl || null,
       });
@@ -616,6 +715,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
             <h2>{t.wizard.aiTitle}</h2>
             <p>{t.wizard.aiDescription}</p>
             <div className="form-grid">
+              <details className="legacy-ai-settings">
+                <summary>Расширенные настройки старых AI-провайдеров</summary>
               <label>
                 {t.wizard.aiProviderLabel}
                 <select
@@ -715,19 +816,20 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   </label>
                 </>
               ) : null}
+              </details>
 
               <label>
-                <span>AI-assisted recognition</span>
+                <span>AI-распознавание</span>
                 <select
                   value={data.recognitionAiEnabled ? "enabled" : "disabled"}
                   onChange={(e) => update({ recognitionAiEnabled: e.target.value === "enabled" })}
                 >
-                  <option value="enabled">Enabled: require LLM preflight before analysis</option>
-                  <option value="disabled">Disabled: parser-only mode</option>
+                  <option value="enabled">Включено: проверять LLM перед анализом</option>
+                  <option value="disabled">Выключено: только встроенный парсер</option>
                 </select>
                 {!data.recognitionAiEnabled ? (
                   <small className="muted">
-                    AI recognition is disabled. MediaForge will use only the deterministic parser, so recognition quality may be lower.
+                    AI-распознавание выключено. MediaForge будет использовать только встроенный парсер, качество распознавания может быть ниже.
                   </small>
                 ) : null}
               </label>
@@ -736,7 +838,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                 <>
                   <h4>AI-провайдер: OpenRouter</h4>
                   <label>
-                    OpenRouter API key
+                    API-ключ OpenRouter
                     <input
                       type="password"
                       value={data.openrouterApiKey}
@@ -748,7 +850,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                     ) : null}
                   </label>
                   <label>
-                    OpenRouter base URL
+                    Адрес API OpenRouter
                     <input
                       value={data.openrouterBaseUrl}
                       onChange={(e) => update({ openrouterBaseUrl: e.target.value })}
@@ -762,22 +864,18 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   </div>
                   <h4>Цепочка быстрого анализа</h4>
                   {[0, 1, 2].map((index) => (
-                    <label key={`fast-${index}`}>
-                      Модель {index + 1}
-                      <select
-                        value={data.openrouterFastChain[index] ?? ""}
-                        onChange={(e) => {
-                          const chain = [...data.openrouterFastChain];
-                          chain[index] = e.target.value;
-                          update({ openrouterFastChain: chain.filter(Boolean) });
-                        }}
-                      >
-                        <option value="">— не выбрана —</option>
-                        {openrouterModels.map((model) => (
-                          <option key={model} value={model}>{model}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <ModelSearchSelect
+                      key={`fast-${index}`}
+                      label={`Модель ${index + 1}`}
+                      value={data.openrouterFastChain[index] ?? ""}
+                      models={openrouterModels}
+                      placeholder="google/gemini-2.0-flash-exp:free"
+                      onChange={(value) => {
+                        const chain = [...data.openrouterFastChain];
+                        chain[index] = value;
+                        update({ openrouterFastChain: chain.map((item) => item.trim()).filter(Boolean) });
+                      }}
+                    />
                   ))}
                   <div className="form-actions">
                     <button
@@ -791,22 +889,18 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                   <CloudTestMessage test={openrouterFastTest} />
                   <h4>Цепочка умной проверки</h4>
                   {[0, 1].map((index) => (
-                    <label key={`smart-${index}`}>
-                      Модель {index + 1}
-                      <select
-                        value={data.openrouterSmartChain[index] ?? ""}
-                        onChange={(e) => {
-                          const chain = [...data.openrouterSmartChain];
-                          chain[index] = e.target.value;
-                          update({ openrouterSmartChain: chain.filter(Boolean) });
-                        }}
-                      >
-                        <option value="">— не выбрана —</option>
-                        {openrouterModels.map((model) => (
-                          <option key={model} value={model}>{model}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <ModelSearchSelect
+                      key={`smart-${index}`}
+                      label={`Модель ${index + 1}`}
+                      value={data.openrouterSmartChain[index] ?? ""}
+                      models={openrouterModels}
+                      placeholder="openai/gpt-4o-mini"
+                      onChange={(value) => {
+                        const chain = [...data.openrouterSmartChain];
+                        chain[index] = value;
+                        update({ openrouterSmartChain: chain.map((item) => item.trim()).filter(Boolean) });
+                      }}
+                    />
                   ))}
                   <div className="form-actions">
                     <button
@@ -818,6 +912,8 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                     </button>
                   </div>
                   <CloudTestMessage test={openrouterSmartTest} />
+                  <details className="legacy-ai-settings">
+                    <summary>Расширенные облачные настройки</summary>
                   <h4>Основная облачная модель</h4>
                   <label>
                     Провайдер основной модели
@@ -828,11 +924,11 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                         setCloudModels([]);
                       }}
                     >
-                      <option value="none">Disabled</option>
+                      <option value="none">Выключено</option>
                       <option value="gemini">Gemini</option>
                       <option value="openai">OpenAI / ChatGPT</option>
                       <option value="openrouter">OpenRouter</option>
-                      <option value="custom">Custom OpenAI-compatible</option>
+                      <option value="custom">Совместимый с OpenAI API</option>
                     </select>
                   </label>
                   {data.cloudAiProvider !== "none" ? (
@@ -843,7 +939,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                           type="password"
                           value={data.cloudAiApiKey}
                           onChange={(e) => update({ cloudAiApiKey: e.target.value })}
-                          placeholder="Paste API key"
+                          placeholder="Вставьте API-ключ"
                         />
                         {savedSettings?.cloud_primary_configured ? (
                           <small className="muted">Ключ сохранён. Оставьте поле пустым, чтобы не менять.</small>
@@ -851,7 +947,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       </label>
                       {data.cloudAiProvider === "custom" ? (
                         <label>
-                          Cloud base URL
+                          Адрес API
                           <input
                             value={data.cloudAiBaseUrl}
                             onChange={(e) => update({ cloudAiBaseUrl: e.target.value })}
@@ -876,7 +972,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                         </label>
                       ) : data.cloudAiProvider === "custom" ? (
                         <label>
-                          Cloud model
+                          Модель
                           <input
                             value={data.cloudAiModel}
                             onChange={(e) => update({ cloudAiModel: e.target.value })}
@@ -907,11 +1003,11 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                         setCloudFallbackModels([]);
                       }}
                     >
-                      <option value="none">Disabled</option>
+                      <option value="none">Выключено</option>
                       <option value="gemini">Gemini</option>
                       <option value="openai">OpenAI / ChatGPT</option>
                       <option value="openrouter">OpenRouter</option>
-                      <option value="custom">Custom OpenAI-compatible</option>
+                      <option value="custom">Совместимый с OpenAI API</option>
                     </select>
                   </label>
                   {data.cloudAiFallbackProvider !== "none" ? (
@@ -922,7 +1018,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                           type="password"
                           value={data.cloudAiFallbackApiKey}
                           onChange={(e) => update({ cloudAiFallbackApiKey: e.target.value })}
-                          placeholder="Paste fallback API key"
+                          placeholder="Вставьте запасной API-ключ"
                         />
                         {savedSettings?.cloud_fallback_configured ? (
                           <small className="muted">Ключ сохранён. Оставьте поле пустым, чтобы не менять.</small>
@@ -981,22 +1077,10 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                     </div>
                   ) : null}
                   <CloudTestMessage test={overallCloudTest} />
+                  </details>
                 </>
               ) : null}
 
-              {data.aiProvider !== "none" ? (
-                <div className="form-actions">
-                  <button type="button" disabled={aiTesting} onClick={() => void handleTestAi()}>
-                    {aiTesting ? t.wizard.aiTesting : t.wizard.aiTest}
-                  </button>
-                </div>
-              ) : null}
-
-              {aiTestResult ? (
-                <div className={`message ${aiTestResult.success ? "info" : "error"}`}>
-                  {aiTestResult.message}
-                </div>
-              ) : null}
             </div>
             <div className="form-actions wizard-nav">
               <button type="button" onClick={() => setStep(2)}>
@@ -1079,11 +1163,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
               <div className="summary-item">
                 <strong>{t.wizard.summaryAi}</strong>
                 <span>
-                  {data.aiProvider === "none"
-                    ? "AI-помощник выключен"
-                    : data.aiModel
-                      ? `${AI_PROVIDER_LABELS[data.aiProvider]}: ${data.aiModel}`
-                      : AI_PROVIDER_LABELS[data.aiProvider]}
+                  {data.recognitionAiEnabled
+                    ? `OpenRouter: быстрых моделей ${data.openrouterFastChain.length}, умных моделей ${data.openrouterSmartChain.length}`
+                    : "AI-распознавание выключено"}
                 </span>
               </div>
               <div className="summary-item">

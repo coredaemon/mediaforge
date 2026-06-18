@@ -16,7 +16,7 @@ from ..schemas.settings import (
 )
 from ..schemas.recognition import LlmPreflightCheck
 from .recognition_clients import GeminiTitleNormalizer, OpenAICompatibleTitleNormalizer, sanitize_error_text
-from .ai_router import dump_model_chain, parse_model_chain
+from .ai_router import AiChainExecutor, dump_model_chain, parse_model_chain
 from .openrouter_client import OPENROUTER_BASE_URL, OpenRouterClient
 from .tmdb_client import TmdbClient
 
@@ -174,12 +174,12 @@ class SettingsService:
             if not _usable_secret(key) and settings.cloud_ai_fallback_provider == "gemini":
                 key = settings.cloud_ai_fallback_api_key or settings.cloud_ai_api_key
             if not _usable_secret(key):
-                return CloudModelsResult(success=False, models=[], message="Gemini API key is not configured.")
+                return CloudModelsResult(success=False, models=[], message="API-ключ Gemini не настроен.")
             return await _get_gemini_models(key)
         if provider == "openrouter":
             key = payload.api_key if _usable_secret(payload.api_key) else settings.openrouter_api_key
             if not _usable_secret(key):
-                return CloudModelsResult(success=False, models=[], message="OpenRouter API key is not configured.")
+                return CloudModelsResult(success=False, models=[], message="API-ключ OpenRouter не настроен.")
             base_url = payload.base_url or settings.openrouter_base_url or OPENROUTER_BASE_URL
             try:
                 models = await OpenRouterClient(key, base_url).list_models()
@@ -197,9 +197,9 @@ class SettingsService:
                 key = settings.cloud_ai_fallback_api_key or settings.cloud_ai_api_key
             base_url = payload.base_url or settings.cloud_ai_base_url or "https://api.openai.com"
             if provider == "openai" and not _usable_secret(key):
-                return CloudModelsResult(success=False, models=[], message="OpenAI API key is not configured.")
+                return CloudModelsResult(success=False, models=[], message="API-ключ OpenAI не настроен.")
             return await _get_openai_models(base_url, key)
-        return CloudModelsResult(success=False, models=[], message=f"Unsupported cloud provider: {provider}")
+        return CloudModelsResult(success=False, models=[], message=f"Облачный провайдер не поддерживается: {provider}")
 
     async def test_cloud_ai(self, payload: CloudAiTestRequest):
         settings = await self.repo.get_or_create()
@@ -217,35 +217,78 @@ class SettingsService:
                     ok=False,
                     provider="gemini",
                     model=model,
-                    error="Gemini API key is not configured.",
+                    error="API-ключ Gemini не настроен.",
                     error_type="not_configured",
                 )
             if not model:
                 return LlmPreflightCheck(
                     ok=False,
                     provider="gemini",
-                    error="Gemini model is not selected.",
+                    error="Модель Gemini не выбрана.",
                     error_type="not_configured",
                 )
             return await GeminiTitleNormalizer(key, model).preflight("gemini")
         if provider == "openrouter":
             key = payload.api_key if _usable_secret(payload.api_key) else settings.openrouter_api_key
             base_url = payload.base_url or settings.openrouter_base_url or OPENROUTER_BASE_URL
+            chain = [model for model in (payload.models or []) if model.strip()]
+            if not chain and payload.stage == "fast":
+                chain = parse_model_chain(settings.openrouter_fast_chain)
+            if not chain and payload.stage == "smart":
+                chain = parse_model_chain(settings.openrouter_smart_chain)
             if not _usable_secret(key):
                 return LlmPreflightCheck(
                     ok=False,
                     provider="openrouter",
                     model=model,
                     endpoint=base_url,
-                    error="OpenRouter API key is not configured.",
+                    error="API-ключ OpenRouter не настроен.",
                     error_type="not_configured",
+                )
+            if chain:
+                result = await AiChainExecutor(OpenRouterClient(key, base_url)).run_json(
+                    models=chain,
+                    messages=[{"role": "user", "content": _preflight_prompt()}],
+                    quality_gate=lambda data: (
+                        data.get("ok") is True and data.get("test") == "mediaforge-preflight",
+                        "Preflight JSON did not match expected fields.",
+                    ),
+                )
+                return LlmPreflightCheck(
+                    ok=result.ok,
+                    provider="openrouter",
+                    model=result.model,
+                    endpoint=base_url,
+                    duration_ms=result.duration_ms,
+                    response_valid_json=result.ok,
+                    message="Цепочка OpenRouter ответила успешно." if result.ok else None,
+                    error=result.technical_error,
+                    error_type=None if result.ok else "chain_failed",
+                    human_message=(
+                        _chain_success_message(payload.stage or "chain", result.model, len(result.attempted_models))
+                        if result.ok
+                        else "Все модели цепочки недоступны. Проверьте список попыток и выберите другие модели."
+                    ),
+                    attempts=max(1, len(result.attempted_models)),
+                    attempted_models=[
+                        {
+                            "model": attempt.model,
+                            "ok": attempt.ok,
+                            "duration_ms": attempt.duration_ms,
+                            "error": attempt.error,
+                            "human_message": attempt.human_message,
+                            "response_valid_json": attempt.response_valid_json,
+                        }
+                        for attempt in result.attempted_models
+                    ],
+                    retryable=not result.ok,
                 )
             if not model:
                 return LlmPreflightCheck(
                     ok=False,
                     provider="openrouter",
                     endpoint=base_url,
-                    error="OpenRouter model is not selected.",
+                    error="Модель OpenRouter не выбрана.",
                     error_type="not_configured",
                 )
             return await OpenAICompatibleTitleNormalizer(base_url, model, key, provider_name="openrouter").preflight("local")
@@ -255,21 +298,21 @@ class SettingsService:
                     ok=False,
                     provider="openai",
                     model=model,
-                    error="OpenAI API key is not configured.",
+                    error="API-ключ OpenAI не настроен.",
                     error_type="not_configured",
                 )
             if not model:
                 return LlmPreflightCheck(
                     ok=False,
                     provider=provider,
-                    error="Cloud AI model is not selected.",
+                    error="Облачная AI-модель не выбрана.",
                     error_type="not_configured",
                 )
             return await OpenAICompatibleTitleNormalizer(base_url or "https://api.openai.com", model, key).preflight("local")
         return LlmPreflightCheck(
             ok=False,
             provider=provider,
-            error=f"Unsupported cloud provider: {provider}",
+            error=f"Облачный провайдер не поддерживается: {provider}",
             error_type="unsupported_provider",
         )
 
@@ -377,3 +420,15 @@ def _openai_compatible_url(base_url: str, path: str) -> str:
     base = base_url.rstrip("/")
     prefix = "" if base.endswith("/v1") else "/v1"
     return f"{base}{prefix}/{path.lstrip('/')}"
+
+
+def _preflight_prompt() -> str:
+    return (
+        "You are MediaForge OpenRouter chain preflight. "
+        'Return only JSON: {"ok":true,"test":"mediaforge-preflight"}'
+    )
+
+
+def _chain_success_message(stage: str, model: str | None, attempts: int) -> str:
+    title = "Быстрый анализ" if stage == "fast" else "Умная проверка" if stage == "smart" else "Цепочка моделей"
+    return f"{title}: подключение успешно. Сработала модель: {model or '—'}. Попыток: {attempts}."
