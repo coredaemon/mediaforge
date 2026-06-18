@@ -163,6 +163,20 @@ The TV dry-run plan writes operations directly under the selected target root:
 
 No extra `TV Shows` folder is added by the new TV planner. TV apply is intentionally disabled in this release; generated operations are for inspection only. Movie apply remains enabled and unchanged.
 
+## OpenRouter-first AI routing
+
+MediaForge now treats OpenRouter as the preferred AI provider. Settings store an OpenRouter key, base URL, a fast-analysis model chain, and a smart-audit model chain. The raw key is write-only: empty values and placeholders do not overwrite a saved key, and GET settings returns only `openrouter_configured`.
+
+The fast chain is used for first-pass cleanup and TV folder grouping. The smart chain is used for audit/refinement. Each chain tries models in order and falls through on transport errors, retryable HTTP errors, invalid JSON, empty output, or quality-gate failure. Legacy Ollama, Gemini, OpenAI, and custom OpenAI-compatible settings remain available as fallback/advanced paths when OpenRouter is not configured.
+
+OpenRouter model discovery uses `GET https://openrouter.ai/api/v1/models` and shows returned IDs plus metadata such as display name, context length, pricing/free markers, and provider prefix when available. Chat completions use the OpenAI-compatible `POST /chat/completions` endpoint.
+
+## Folder classification and scanner diagnostics
+
+After scanning, MediaForge can classify a folder as `movies`, `tv`, `mixed`, or `unknown` using deterministic evidence from video counts, folder structure, TV episode hints, movie year hints, sidecars, and extensions. The session page shows the classification confidence, reason, known video extensions, ignored extensions, nested folder count, and a warning when files exist but no supported video files were detected.
+
+The scanner now recognizes common TV/video extensions including `.mkv`, `.mp4`, `.avi`, `.mov`, `.m4v`, `.ts`, `.m2ts`, `.mts`, `.webm`, `.wmv`, and `.flv`, case-insensitively. This fixes the real-world failure mode where a TV source folder had files but `video = 0`.
+
 If AI-assisted recognition is enabled, analysis does not continue unless both local and cloud preflight checks pass. If Ollama is down, the selected model is unavailable, Gemini is missing, the key is invalid, or the model returns invalid JSON, the UI stops the pipeline and shows the failed provider, model, duration, error type, and a sanitized response preview. Parser-only mode is available only when AI-assisted recognition is explicitly disabled in settings.
 
 Per-item diagnostics are saved for local AI and Gemini normalization: status, duration, model, JSON validity, and sanitized error text. These diagnostics are shown in the session review cards so it is visible whether AI actually ran. If a model returns useful title/year data but `tmdb_queries` or other fields are in a non-ideal format, MediaForge normalizes them automatically and records a short warning instead of failing the item.

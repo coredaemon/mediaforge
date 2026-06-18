@@ -13,6 +13,7 @@ from ...models.scan_session import ScanSession
 from ...repositories.media_file_repository import MediaFileRepository
 from ...repositories.media_item_repository import MediaItemRepository
 from ...schemas.media_file import MediaFileRead
+from ...schemas.classification import MediaClassificationResult
 from ...schemas.media_item import MediaItemRead
 from ...schemas.operation_plan import OperationPlanRead
 from ...schemas.review import BulkApproveRequest, BulkReviewDecisionRequest, BulkReviewResult
@@ -20,6 +21,7 @@ from ...schemas.recognition import RecognitionNormalizeResult
 from ...schemas.scan_session import ScanSessionCreate, ScanSessionDeleteResult, ScanSessionListItem, ScanSessionRead
 from ...schemas.tmdb import TmdbMatchResult
 from ...services.bulk_review_service import BulkReviewError, BulkReviewService
+from ...services.media_classification_service import MediaClassificationService
 from ...services.parser_service import ParserService
 from ...services.planning_service import NoMatchedItemsError, PlanningService
 from ...services.recognition_clients import TitleNormalizerClient
@@ -172,6 +174,17 @@ async def list_scan_session_files(
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return await MediaFileRepository(session).list_for_scan_session(session_id)
+
+
+@router.get("/{session_id}/classification", response_model=MediaClassificationResult)
+async def classify_scan_session_content(
+    session_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> MediaClassificationResult:
+    try:
+        return await MediaClassificationService(session).classify(session_id)
+    except ScanSessionNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{session_id}/parse", response_model=ScanSessionRead)

@@ -326,6 +326,10 @@ export interface AppSettingsRead {
   cloud_ai_model: string | null;
   cloud_ai_fallback_provider: string | null;
   cloud_ai_fallback_model: string | null;
+  openrouter_configured: boolean;
+  openrouter_base_url: string | null;
+  openrouter_fast_chain: string[];
+  openrouter_smart_chain: string[];
   recognition_ai_enabled: boolean;
   default_source_path: string | null;
   default_target_path: string | null;
@@ -346,6 +350,10 @@ export interface AppSettingsUpdate {
   cloud_ai_fallback_provider?: string | null;
   cloud_ai_fallback_api_key?: string | null;
   cloud_ai_fallback_model?: string | null;
+  openrouter_api_key?: string | null;
+  openrouter_base_url?: string | null;
+  openrouter_fast_chain?: string[] | null;
+  openrouter_smart_chain?: string[] | null;
   recognition_ai_enabled?: boolean | null;
   default_source_path?: string | null;
   default_target_path?: string | null;
@@ -515,6 +523,10 @@ export interface CloudModel {
   label: string;
   display_name: string | null;
   description: string | null;
+  context_length?: number | null;
+  pricing?: Record<string, unknown> | null;
+  provider?: string | null;
+  is_free?: boolean | null;
   supported_generation_methods: string[];
 }
 
@@ -535,4 +547,28 @@ export interface CloudAiTestRequest {
   model: string;
   api_key?: string | null;
   base_url?: string | null;
+}
+
+export interface ExtensionCount {
+  extension: string;
+  count: number;
+}
+
+export interface MediaClassificationResult {
+  scan_session_id: number;
+  content_type: "movies" | "tv" | "mixed" | "unknown";
+  confidence: number;
+  reason: string;
+  total_files: number;
+  video_files: number;
+  subtitle_files: number;
+  sidecar_files: number;
+  nested_folder_count: number;
+  known_extensions: ExtensionCount[];
+  ignored_extensions: ExtensionCount[];
+  movie_like_files: number;
+  tv_like_files: number;
+  mixed: boolean;
+  needs_user_decision: boolean;
+  warnings: string[];
 }

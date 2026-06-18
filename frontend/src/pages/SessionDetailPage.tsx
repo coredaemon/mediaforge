@@ -8,6 +8,7 @@ import {
   applyTvReviewDecision,
   approveAllMatched,
   bulkReviewDecision,
+  classifySession,
   createPlan,
   createTvPlan,
   createRecognitionCorrection,
@@ -53,6 +54,7 @@ import {
 import type {
   BulkReviewResult,
   MediaFile,
+  MediaClassificationResult,
   MediaItem,
   OperationPlan,
   ApplyRun,
@@ -73,10 +75,11 @@ type StepStatus = "pending" | "running" | "done" | "error";
 const analysisSteps: { key: string; label: string }[] = [
   { key: "preflight", label: "Проверка AI" },
   { key: "discover", label: "Сканирование файлов" },
+  { key: "classification", label: "Классификация папки" },
   { key: "parse", label: "Распознавание названий" },
   { key: "match", label: "Поиск в TMDB" },
-  { key: "local-ai", label: "Локальная AI-модель" },
-  { key: "gemini", label: "Распознавание запасной облачной моделью" },
+  { key: "local-ai", label: "Быстрый AI-анализ" },
+  { key: "gemini", label: "Умная AI-проверка" },
   { key: "tv", label: "Распознавание сериалов" },
   { key: "tv-plan", label: "План сериалов" },
   { key: "plan", label: "Построение безопасного плана" },
@@ -144,6 +147,13 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
   );
 }
 
+function labelContentType(value: MediaClassificationResult["content_type"] | undefined): string {
+  if (value === "movies") return "фильмы";
+  if (value === "tv") return "сериалы";
+  if (value === "mixed") return "смешанная папка";
+  return "неизвестно";
+}
+
 function formatPreflightError(result: RecognitionPreflightResult): string {
   if (result.message) {
     return result.message;
@@ -195,10 +205,10 @@ function PreflightPanel({ result, status }: { result: RecognitionPreflightResult
         <StepBadge status={status} />
       </div>
       <div className="preflight-grid">
-        <PreflightCheckBlock title="Локальная AI-модель" check={result?.local} />
-        <PreflightCheckBlock title="Облачная AI-модель (основная)" check={result?.cloud} />
+        <PreflightCheckBlock title="Быстрый AI-анализ" check={result?.local} />
+        <PreflightCheckBlock title="Умная AI-проверка" check={result?.cloud} />
         {result?.cloud_fallback ? (
-          <PreflightCheckBlock title="Облачная AI-модель (запасная)" check={result.cloud_fallback} />
+          <PreflightCheckBlock title="Запасная AI-модель" check={result.cloud_fallback} />
         ) : null}
       </div>
       {result?.warning ? <div className="message warning">{result.warning}</div> : null}
@@ -213,6 +223,7 @@ export function SessionDetailPage() {
 
   const [session, setSession] = useState<ScanSession | null>(null);
   const [files, setFiles] = useState<MediaFile[]>([]);
+  const [classification, setClassification] = useState<MediaClassificationResult | null>(null);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [tvShows, setTvShows] = useState<TvShow[]>([]);
   const [plans, setPlans] = useState<OperationPlan[]>([]);
@@ -223,6 +234,7 @@ export function SessionDetailPage() {
   const [stepStatus, setStepStatus] = useState<Record<string, StepStatus>>({
     preflight: "pending",
     discover: "pending",
+    classification: "pending",
     parse: "pending",
     "local-ai": "pending",
     match: "pending",
@@ -299,6 +311,12 @@ export function SessionDetailPage() {
       setFiles,
       setReviewError,
       "Не удалось загрузить список файлов",
+    );
+    await loadSection(
+      () => classifySession(numId),
+      setClassification,
+      setReviewError,
+      "Не удалось классифицировать содержимое папки",
     );
     const loadedItems = await loadSection(
       () => listItems(numId),
@@ -425,6 +443,7 @@ export function SessionDetailPage() {
     const nextStatus: Record<string, StepStatus> = {
       preflight: "pending",
       discover: "pending",
+      classification: "pending",
       parse: "pending",
       "local-ai": "pending",
       match: "pending",
@@ -453,6 +472,7 @@ export function SessionDetailPage() {
         }
       });
       await runStep("discover", () => discoverSession(numId));
+      await runStep("classification", () => classifySession(numId));
       await runStep("parse", () => parseSession(numId));
       await runStep("match", () => matchTmdbSession(numId));
       await runStep("local-ai", () => normalizeLocalAi(numId));
@@ -754,6 +774,42 @@ export function SessionDetailPage() {
         <SummaryCard label="Операций в плане" value={summary.operations} />
         <SummaryCard label="Конфликтов" value={summary.conflicts} />
       </section>
+
+      {classification ? (
+        <section className="panel compact-review-section">
+          <div className="section-heading">
+            <h3>Тип содержимого: {labelContentType(classification.content_type)}</h3>
+            <span className="muted">уверенность {Math.round(classification.confidence * 100)}%</span>
+          </div>
+          <p className="muted">{classification.reason}</p>
+          <p className="muted">
+            Видео: {classification.video_files} · Вложенных папок: {classification.nested_folder_count} · TV-признаков: {classification.tv_like_files} · Фильм-признаков: {classification.movie_like_files}
+          </p>
+          {classification.known_extensions.length > 0 ? (
+            <p className="muted">
+              Видео-расширения: {classification.known_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
+            </p>
+          ) : null}
+          {classification.ignored_extensions.length > 0 ? (
+            <p className="muted">
+              Игнорируются: {classification.ignored_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
+            </p>
+          ) : null}
+          {classification.warnings.map((warning) => (
+            <div className="message warning" key={warning}>{warning}</div>
+          ))}
+          {classification.needs_user_decision ? (
+            <div className="manual-review-actions">
+              <button type="button" disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "Папка будет обработана как фильмы.")}>Фильмы</button>
+              <button type="button" disabled={busy} onClick={() => void runAction("tv", () => analyzeTvSession(numId, true), "Папка будет обработана как сериалы.")}>Сериалы</button>
+              <button type="button" disabled={busy} onClick={() => void runAction("mixed", async () => {
+                await parseSession(numId);
+                await analyzeTvSession(numId, true);
+              }, "Папка будет обработана как смешанная.")}>Смешанная папка</button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="panel review-main-panel">
         <div className="section-heading">

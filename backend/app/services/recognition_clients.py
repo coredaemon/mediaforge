@@ -91,10 +91,18 @@ class OllamaTitleNormalizer:
 
 
 class OpenAICompatibleTitleNormalizer:
-    def __init__(self, base_url: str, model: str | None, api_key: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str | None,
+        api_key: str | None = None,
+        *,
+        provider_name: str = "openai-compatible",
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model or "local-model"
         self.api_key = api_key
+        self.provider_name = provider_name
 
     async def normalize(
         self,
@@ -111,7 +119,7 @@ class OpenAICompatibleTitleNormalizer:
         }
         if self.api_key:
             response, _ = await post_with_retry(
-                f"{self.base_url}/v1/chat/completions",
+                _openai_compatible_url(self.base_url, "chat/completions"),
                 timeout=_TIMEOUT_SECONDS,
                 json=payload,
                 headers=headers,
@@ -119,7 +127,7 @@ class OpenAICompatibleTitleNormalizer:
             body = response.json()["choices"][0]["message"]["content"]
         else:
             async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-                response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
+                response = await client.post(_openai_compatible_url(self.base_url, "chat/completions"), json=payload, headers=headers)
                 response.raise_for_status()
                 body = response.json()["choices"][0]["message"]["content"]
         return _parse_normalized_json(body, parser_title=parser_title, parser_year=parser_year)
@@ -135,7 +143,7 @@ class OpenAICompatibleTitleNormalizer:
             }
             if self.api_key:
                 response, attempts = await post_with_retry(
-                    f"{self.base_url}/v1/chat/completions",
+                    _openai_compatible_url(self.base_url, "chat/completions"),
                     timeout=_TIMEOUT_SECONDS,
                     json=payload,
                     headers=headers,
@@ -145,21 +153,104 @@ class OpenAICompatibleTitleNormalizer:
             else:
                 attempts = 1
                 async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
-                    response = await client.post(f"{self.base_url}/v1/chat/completions", json=payload, headers=headers)
+                    response = await client.post(_openai_compatible_url(self.base_url, "chat/completions"), json=payload, headers=headers)
                     response.raise_for_status()
                     text = response.json()["choices"][0]["message"]["content"]
                 duration_ms = _duration_ms(started)
             return _validate_preflight_response(
                 text,
                 expected_provider=expected_provider,
-                provider="openai-compatible",
+                provider=self.provider_name,
                 model=self.model,
                 endpoint=self.base_url,
                 duration_ms=duration_ms,
                 attempts=attempts,
             )
         except Exception as exc:
-            return _failed_preflight("openai-compatible", self.model, self.base_url, started, exc)
+            return _failed_preflight(self.provider_name, self.model, self.base_url, started, exc)
+
+
+class OpenRouterChainTitleNormalizer:
+    def __init__(self, api_key: str, base_url: str, models: list[str], stage: str) -> None:
+        from .ai_router import AiChainExecutor
+        from .openrouter_client import OpenRouterClient
+
+        self.base_url = base_url.rstrip("/")
+        self.models = [model for model in models if model]
+        self.model = self.models[0] if self.models else None
+        self.stage = stage
+        self.executor = AiChainExecutor(OpenRouterClient(api_key, self.base_url))
+
+    async def normalize(
+        self,
+        original_name: str,
+        parser_title: str | None,
+        parser_year: int | None,
+        context: RecognitionContext | None = None,
+    ) -> NormalizeParseResult:
+        if not self.models:
+            raise ValueError("OpenRouter model chain is empty.")
+        result = await self.executor.run_json(
+            models=self.models,
+            messages=[{"role": "user", "content": _prompt(original_name, parser_title, parser_year, context)}],
+            quality_gate=lambda data: (bool(data.get("clean_title") or data.get("tmdb_queries")), "No usable title or TMDB query."),
+        )
+        if not result.ok or result.normalized_json is None:
+            raise ValueError(result.technical_error or result.human_message or "OpenRouter chain failed.")
+        title, warnings = coerce_normalized_title(
+            result.normalized_json,
+            parser_title=parser_title,
+            parser_year=parser_year,
+        )
+        fallback_count = max(0, len(result.attempted_models) - 1)
+        if fallback_count:
+            warnings.append(f"OpenRouter used fallback model after {fallback_count} failed attempt(s).")
+        self.model = result.model
+        return NormalizeParseResult(title=title, warnings=warnings)
+
+    async def preflight(self, expected_provider: str = "local") -> LlmPreflightCheck:
+        started = time.perf_counter()
+        if not self.models:
+            return LlmPreflightCheck(
+                ok=False,
+                provider="openrouter",
+                endpoint=self.base_url,
+                error="OpenRouter model chain is empty.",
+                error_type="not_configured",
+            )
+        result = await self.executor.run_json(
+            models=self.models,
+            messages=[{"role": "user", "content": _preflight_prompt(expected_provider)}],
+            quality_gate=lambda data: (
+                data.get("ok") is True and data.get("test") == _PREFLIGHT_TEST,
+                "Preflight JSON did not match expected fields.",
+            ),
+        )
+        if result.ok:
+            self.model = result.model
+            return LlmPreflightCheck(
+                ok=True,
+                provider="openrouter",
+                model=result.model,
+                endpoint=self.base_url,
+                duration_ms=result.duration_ms,
+                response_valid_json=True,
+                message=f"OpenRouter {self.stage} chain responded successfully",
+                attempts=len(result.attempted_models),
+            )
+        return LlmPreflightCheck(
+            ok=False,
+            provider="openrouter",
+            model=self.model,
+            endpoint=self.base_url,
+            duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            response_valid_json=False,
+            error=result.technical_error,
+            human_message=result.human_message,
+            error_type="chain_failed",
+            attempts=max(1, len(result.attempted_models)),
+            retryable=True,
+        )
 
 
 class GeminiTitleNormalizer:
@@ -351,6 +442,12 @@ def _sanitize_preview(text: str) -> str:
 
 def _duration_ms(started: float) -> int:
     return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def _openai_compatible_url(base_url: str, path: str) -> str:
+    base = base_url.rstrip("/")
+    prefix = "" if base.endswith("/v1") else "/v1"
+    return f"{base}{prefix}/{path.lstrip('/')}"
 
 
 def _prompt(

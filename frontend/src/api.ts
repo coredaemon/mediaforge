@@ -7,6 +7,7 @@ import type {
   CloudModelsResult,
   HealthResponse,
   LocalModelsResult,
+  MediaClassificationResult,
   MediaFile,
   MediaItem,
   ApplyRun,
@@ -178,6 +179,10 @@ export function createTvPlan(sessionId: number, force = false): Promise<Operatio
 
 export function listFiles(sessionId: number): Promise<MediaFile[]> {
   return request<MediaFile[]>(`/scan-sessions/${sessionId}/files`);
+}
+
+export function classifySession(sessionId: number): Promise<MediaClassificationResult> {
+  return request<MediaClassificationResult>(`/scan-sessions/${sessionId}/classification`);
 }
 
 export function listItems(sessionId: number): Promise<MediaItem[]> {

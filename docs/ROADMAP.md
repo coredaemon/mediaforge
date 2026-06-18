@@ -35,3 +35,10 @@
 - Add richer episode-level manual editing.
 - Persist and restore more TV memory fields across sessions.
 - Expand cloud audit prompts once local grouping behavior is stable on real libraries.
+
+## OpenRouter AI Routing
+
+- OpenRouter-first model discovery and fast/smart model chains: done.
+- Automatic folder classification with scanner diagnostics: done.
+- Legacy Ollama/Gemini providers retained as advanced fallback.
+- Follow-up: richer UI for model pricing/context metadata and per-model attempt diagnostics.

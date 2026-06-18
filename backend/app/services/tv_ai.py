@@ -8,7 +8,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.tv_grouping_run import TvGroupingRun
+from ..repositories.app_settings_repository import AppSettingsRepository
 from ..schemas.tv import TvFolderContext
+from ..services.ai_router import AiChainExecutor, parse_model_chain
+from ..services.openrouter_client import OPENROUTER_BASE_URL, OpenRouterClient
 from ..utils.ai_response_normalization import normalize_confidence, normalize_tmdb_queries
 
 
@@ -24,6 +27,8 @@ class TvAiGroupingService:
         try:
             if self.local_client is not None and hasattr(self.local_client, "group_tv"):
                 raw = await self.local_client.group_tv(context.model_dump())
+            elif (router_output := await self._openrouter_group(context)) is not None:
+                raw = router_output
             else:
                 raw = _deterministic_grouping(context)
             normalized = normalize_tv_grouping(raw, context)
@@ -46,6 +51,21 @@ class TvAiGroupingService:
         await self.session.flush()
         return output
 
+    async def _openrouter_group(self, context: TvFolderContext) -> dict[str, Any] | None:
+        settings = await AppSettingsRepository(self.session).get_or_create()
+        if not settings.openrouter_api_key:
+            return None
+        chain = parse_model_chain(settings.openrouter_fast_chain)
+        if not chain:
+            return None
+        executor = AiChainExecutor(OpenRouterClient(settings.openrouter_api_key, settings.openrouter_base_url or OPENROUTER_BASE_URL))
+        result = await executor.run_json(
+            models=chain,
+            messages=[{"role": "user", "content": _tv_grouping_prompt(context)}],
+            quality_gate=lambda data: _tv_grouping_quality_gate(data, context),
+        )
+        return result.normalized_json if result.ok else None
+
 
 class TvCloudAuditService:
     def __init__(self, session: AsyncSession, gemini_client: object | None = None) -> None:
@@ -65,6 +85,8 @@ class TvCloudAuditService:
         try:
             if self.gemini_client is not None and hasattr(self.gemini_client, "audit_tv"):
                 raw = await self.gemini_client.audit_tv(context.model_dump(), grouping, tmdb_data)
+            elif (router_output := await self._openrouter_audit(context, grouping, tmdb_data)) is not None:
+                raw = router_output
             else:
                 raw = _identity_audit(grouping)
             output = normalize_tv_audit(raw, grouping)
@@ -86,6 +108,26 @@ class TvCloudAuditService:
         )
         await self.session.flush()
         return output
+
+    async def _openrouter_audit(
+        self,
+        context: TvFolderContext,
+        grouping: dict[str, Any],
+        tmdb_data: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        settings = await AppSettingsRepository(self.session).get_or_create()
+        if not settings.openrouter_api_key:
+            return None
+        chain = parse_model_chain(settings.openrouter_smart_chain)
+        if not chain:
+            return None
+        executor = AiChainExecutor(OpenRouterClient(settings.openrouter_api_key, settings.openrouter_base_url or OPENROUTER_BASE_URL))
+        result = await executor.run_json(
+            models=chain,
+            messages=[{"role": "user", "content": _tv_audit_prompt(context, grouping, tmdb_data)}],
+            quality_gate=lambda data: (isinstance(data.get("shows"), list), "Audit response must contain shows array."),
+        )
+        return result.normalized_json if result.ok else None
 
 
 def normalize_tv_grouping(value: Any, context: TvFolderContext) -> dict[str, Any]:
@@ -299,3 +341,61 @@ def _string_list(value: Any) -> list[str]:
 
 def _has_cyrillic(text: str) -> bool:
     return any("\u0400" <= ch <= "\u04FF" for ch in text)
+
+
+def _tv_grouping_prompt(context: TvFolderContext) -> str:
+    payload = context.model_dump()
+    return (
+        "You are MediaForge fast TV folder analysis.\n"
+        "Understand the whole folder tree, not file-by-file only.\n"
+        "Return strict JSON with shows -> seasons -> episodes -> source files.\n"
+        "Preserve Russian/Cyrillic titles. Keep uncertain files.\n"
+        "Expected shape: {\"shows\":[{\"local_group_id\":\"show-1\",\"probable_title\":\"...\","
+        "\"year\":null,\"confidence\":0.8,\"reason\":\"...\",\"tmdb_queries\":[\"...\"],"
+        "\"external_ids\":{},\"seasons\":[{\"season_number\":1,\"confidence\":0.9,"
+        "\"episodes\":[{\"episode_number\":1,\"file_relative_path\":\"...\",\"episode_title\":null,"
+        "\"confidence\":0.9,\"reason\":\"...\"}]}],\"uncertain_files\":[]}],\"warnings\":[]}.\n"
+        f"Folder context JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+def _tv_audit_prompt(context: TvFolderContext, grouping: dict[str, Any], tmdb_data: dict[str, Any]) -> str:
+    payload = {
+        "folder_context": context.model_dump(),
+        "local_grouping": grouping,
+        "tmdb_data": tmdb_data,
+    }
+    return (
+        "You are MediaForge smart TV audit.\n"
+        "Verify show grouping, seasons, episodes, missing/duplicate files, and TMDB selection.\n"
+        "Return strict JSON with shows array. Preserve Russian titles unless there is a clear reason.\n"
+        "Expected shape: {\"shows\":[{\"local_group_id\":\"show-1\",\"approved\":true,"
+        "\"corrected_title\":\"...\",\"corrected_year\":2024,\"selected_tmdb_id\":123,"
+        "\"selected_reason\":\"...\",\"confidence\":0.9,\"seasons\":[],\"issues\":[],"
+        "\"manual_review_required\":false}],\"global_warnings\":[]}.\n"
+        f"Audit input JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+def _tv_grouping_quality_gate(data: dict[str, Any], context: TvFolderContext) -> tuple[bool, str | None]:
+    shows = data.get("shows")
+    video_count = sum(1 for file in context.files if file.kind == "VIDEO")
+    if not isinstance(shows, list):
+        return False, "TV grouping response must contain shows array."
+    if video_count > 0 and not shows:
+        return False, "Video files exist but AI returned no shows."
+    mapped = 0
+    for show in shows:
+        if not isinstance(show, dict):
+            continue
+        seasons = show.get("seasons")
+        if not isinstance(seasons, list) or not seasons:
+            return False, "Show has no seasons."
+        for season in seasons:
+            episodes = season.get("episodes") if isinstance(season, dict) else None
+            if not isinstance(episodes, list) or not episodes:
+                return False, "Season has no episodes."
+            mapped += len(episodes)
+    if video_count >= 3 and mapped < max(1, int(video_count * 0.5)):
+        return False, "Mapped episode count is suspiciously low compared to video count."
+    return True, None

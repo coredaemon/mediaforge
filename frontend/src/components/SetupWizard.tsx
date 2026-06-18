@@ -16,7 +16,7 @@ import type { AppSettingsRead, LlmPreflightCheck } from "../types";
 import { FolderPickerModal } from "./FolderPickerModal";
 
 type AiProvider = "none" | "gemini" | "ollama" | "lmstudio" | "custom";
-type CloudAiProvider = "none" | "gemini" | "openai" | "custom";
+type CloudAiProvider = "none" | "gemini" | "openai" | "openrouter" | "custom";
 
 interface WizardData {
   tmdbKey: string;
@@ -31,6 +31,10 @@ interface WizardData {
   cloudAiFallbackProvider: CloudAiProvider;
   cloudAiFallbackApiKey: string;
   cloudAiFallbackModel: string;
+  openrouterApiKey: string;
+  openrouterBaseUrl: string;
+  openrouterFastChain: string[];
+  openrouterSmartChain: string[];
   recognitionAiEnabled: boolean;
   sourcePath: string;
   targetPath: string;
@@ -132,6 +136,10 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     cloudAiFallbackProvider: "none",
     cloudAiFallbackApiKey: "",
     cloudAiFallbackModel: "",
+    openrouterApiKey: "",
+    openrouterBaseUrl: "https://openrouter.ai/api/v1",
+    openrouterFastChain: [],
+    openrouterSmartChain: [],
     recognitionAiEnabled: true,
     sourcePath: "",
     targetPath: "",
@@ -153,6 +161,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
           cloudAiModel: s.cloud_ai_model ?? "gemini-2.0-flash",
           cloudAiFallbackProvider: (s.cloud_ai_fallback_provider as CloudAiProvider | null) ?? "none",
           cloudAiFallbackModel: s.cloud_ai_fallback_model ?? "",
+          openrouterBaseUrl: s.openrouter_base_url ?? "https://openrouter.ai/api/v1",
+          openrouterFastChain: s.openrouter_fast_chain ?? [],
+          openrouterSmartChain: s.openrouter_smart_chain ?? [],
           recognitionAiEnabled: s.recognition_ai_enabled,
           sourcePath: prev.sourcePath || s.default_source_path || "",
           targetPath: prev.targetPath || s.default_target_path || "",
@@ -175,6 +186,12 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
   const [aiSearching, setAiSearching] = useState(false);
   const [cloudModels, setCloudModels] = useState<string[]>([]);
   const [cloudFallbackModels, setCloudFallbackModels] = useState<string[]>([]);
+  const [openrouterModels, setOpenrouterModels] = useState<string[]>([]);
+  const [openrouterSearching, setOpenrouterSearching] = useState(false);
+  const [openrouterFastTest, setOpenrouterFastTest] = useState<CloudTestState>(emptyCloudTest());
+  const [openrouterSmartTest, setOpenrouterSmartTest] = useState<CloudTestState>(emptyCloudTest());
+  const [openrouterFastTesting, setOpenrouterFastTesting] = useState(false);
+  const [openrouterSmartTesting, setOpenrouterSmartTesting] = useState(false);
   const [cloudSearching, setCloudSearching] = useState(false);
   const [cloudFallbackSearching, setCloudFallbackSearching] = useState(false);
   const [primaryCloudTest, setPrimaryCloudTest] = useState<CloudTestState>(emptyCloudTest());
@@ -295,6 +312,58 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
     }
   }
 
+  async function handleSearchOpenRouterModels() {
+    setOpenrouterSearching(true);
+    setOpenrouterModels([]);
+    try {
+      const result = await getCloudAiModels({
+        provider: "openrouter",
+        api_key: data.openrouterApiKey || null,
+        base_url: data.openrouterBaseUrl || null,
+      });
+      setOpenrouterModels(result.models.map((model) => model.id));
+      if (!result.success) {
+        setOpenrouterFastTest({
+          status: "error",
+          message: result.message ?? "Не удалось загрузить модели OpenRouter",
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Не удалось загрузить модели OpenRouter";
+      setOpenrouterFastTest({ status: "error", message: msg });
+    } finally {
+      setOpenrouterSearching(false);
+    }
+  }
+
+  async function handleTestOpenRouterChain(stage: "fast" | "smart") {
+    const chain = stage === "fast" ? data.openrouterFastChain : data.openrouterSmartChain;
+    const setTesting = stage === "fast" ? setOpenrouterFastTesting : setOpenrouterSmartTesting;
+    const setTest = stage === "fast" ? setOpenrouterFastTest : setOpenrouterSmartTest;
+    setTesting(true);
+    setTest(emptyCloudTest());
+    try {
+      await updateSettings({
+        openrouter_api_key: data.openrouterApiKey || null,
+        openrouter_base_url: data.openrouterBaseUrl || null,
+        openrouter_fast_chain: data.openrouterFastChain,
+        openrouter_smart_chain: data.openrouterSmartChain,
+      });
+      const result = await testCloudAi({
+        provider: "openrouter",
+        model: chain[0] ?? "",
+        api_key: data.openrouterApiKey || null,
+        base_url: data.openrouterBaseUrl || null,
+      });
+      setTest(cloudTestFromResult(result));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Проверка OpenRouter не удалась";
+      setTest({ status: "error", message: humanizeAiError(msg) });
+    } finally {
+      setTesting(false);
+    }
+  }
+
   async function persistAiSettingsForTest() {
     const aiPayload: Record<string, unknown> = {
       ai_provider: data.aiProvider,
@@ -305,11 +374,15 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       cloud_ai_model: data.cloudAiModel || null,
       cloud_ai_fallback_provider: data.cloudAiFallbackProvider,
       cloud_ai_fallback_model: data.cloudAiFallbackModel || null,
+      openrouter_base_url: data.openrouterBaseUrl || null,
+      openrouter_fast_chain: data.openrouterFastChain,
+      openrouter_smart_chain: data.openrouterSmartChain,
       recognition_ai_enabled: data.recognitionAiEnabled,
     };
     if (data.aiApiKey) aiPayload.ai_api_key = data.aiApiKey;
     if (data.cloudAiApiKey) aiPayload.cloud_ai_api_key = data.cloudAiApiKey;
     if (data.cloudAiFallbackApiKey) aiPayload.cloud_ai_fallback_api_key = data.cloudAiFallbackApiKey;
+    if (data.openrouterApiKey) aiPayload.openrouter_api_key = data.openrouterApiKey;
     await updateSettings(aiPayload);
   }
 
@@ -401,6 +474,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
         cloud_ai_model: data.cloudAiModel || null,
         cloud_ai_fallback_provider: data.cloudAiFallbackProvider,
         cloud_ai_fallback_model: data.cloudAiFallbackModel || null,
+        openrouter_base_url: data.openrouterBaseUrl || null,
+        openrouter_fast_chain: data.openrouterFastChain,
+        openrouter_smart_chain: data.openrouterSmartChain,
         recognition_ai_enabled: data.recognitionAiEnabled,
         default_source_path: data.sourcePath || null,
         default_target_path: data.targetPath || null,
@@ -410,6 +486,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
       if (data.aiApiKey) payload.ai_api_key = data.aiApiKey;
       if (data.cloudAiApiKey) payload.cloud_ai_api_key = data.cloudAiApiKey;
       if (data.cloudAiFallbackApiKey) payload.cloud_ai_fallback_api_key = data.cloudAiFallbackApiKey;
+      if (data.openrouterApiKey) payload.openrouter_api_key = data.openrouterApiKey;
       await updateSettings(payload);
       onComplete();
     } catch (err) {
@@ -657,6 +734,90 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
 
               {data.recognitionAiEnabled ? (
                 <>
+                  <h4>AI-провайдер: OpenRouter</h4>
+                  <label>
+                    OpenRouter API key
+                    <input
+                      type="password"
+                      value={data.openrouterApiKey}
+                      onChange={(e) => update({ openrouterApiKey: e.target.value })}
+                      placeholder="sk-or-..."
+                    />
+                    {savedSettings?.openrouter_configured ? (
+                      <small className="muted">Ключ сохранён. Оставьте поле пустым, чтобы не менять ключ.</small>
+                    ) : null}
+                  </label>
+                  <label>
+                    OpenRouter base URL
+                    <input
+                      value={data.openrouterBaseUrl}
+                      onChange={(e) => update({ openrouterBaseUrl: e.target.value })}
+                      placeholder="https://openrouter.ai/api/v1"
+                    />
+                  </label>
+                  <div className="form-actions">
+                    <button type="button" disabled={openrouterSearching} onClick={() => void handleSearchOpenRouterModels()}>
+                      {openrouterSearching ? "Поиск..." : "Найти модели"}
+                    </button>
+                  </div>
+                  <h4>Цепочка быстрого анализа</h4>
+                  {[0, 1, 2].map((index) => (
+                    <label key={`fast-${index}`}>
+                      Модель {index + 1}
+                      <select
+                        value={data.openrouterFastChain[index] ?? ""}
+                        onChange={(e) => {
+                          const chain = [...data.openrouterFastChain];
+                          chain[index] = e.target.value;
+                          update({ openrouterFastChain: chain.filter(Boolean) });
+                        }}
+                      >
+                        <option value="">— не выбрана —</option>
+                        {openrouterModels.map((model) => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      disabled={openrouterFastTesting || data.openrouterFastChain.length === 0}
+                      onClick={() => void handleTestOpenRouterChain("fast")}
+                    >
+                      {openrouterFastTesting ? "Проверка..." : "Проверить быстрый анализ"}
+                    </button>
+                  </div>
+                  <CloudTestMessage test={openrouterFastTest} />
+                  <h4>Цепочка умной проверки</h4>
+                  {[0, 1].map((index) => (
+                    <label key={`smart-${index}`}>
+                      Модель {index + 1}
+                      <select
+                        value={data.openrouterSmartChain[index] ?? ""}
+                        onChange={(e) => {
+                          const chain = [...data.openrouterSmartChain];
+                          chain[index] = e.target.value;
+                          update({ openrouterSmartChain: chain.filter(Boolean) });
+                        }}
+                      >
+                        <option value="">— не выбрана —</option>
+                        {openrouterModels.map((model) => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                  <div className="form-actions">
+                    <button
+                      type="button"
+                      disabled={openrouterSmartTesting || data.openrouterSmartChain.length === 0}
+                      onClick={() => void handleTestOpenRouterChain("smart")}
+                    >
+                      {openrouterSmartTesting ? "Проверка..." : "Проверить умную проверку"}
+                    </button>
+                  </div>
+                  <CloudTestMessage test={openrouterSmartTest} />
                   <h4>Основная облачная модель</h4>
                   <label>
                     Провайдер основной модели
@@ -670,6 +831,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       <option value="none">Disabled</option>
                       <option value="gemini">Gemini</option>
                       <option value="openai">OpenAI / ChatGPT</option>
+                      <option value="openrouter">OpenRouter</option>
                       <option value="custom">Custom OpenAI-compatible</option>
                     </select>
                   </label>
@@ -748,6 +910,7 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       <option value="none">Disabled</option>
                       <option value="gemini">Gemini</option>
                       <option value="openai">OpenAI / ChatGPT</option>
+                      <option value="openrouter">OpenRouter</option>
                       <option value="custom">Custom OpenAI-compatible</option>
                     </select>
                   </label>

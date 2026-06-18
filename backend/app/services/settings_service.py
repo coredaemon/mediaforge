@@ -1,3 +1,5 @@
+import json
+
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +16,8 @@ from ..schemas.settings import (
 )
 from ..schemas.recognition import LlmPreflightCheck
 from .recognition_clients import GeminiTitleNormalizer, OpenAICompatibleTitleNormalizer, sanitize_error_text
+from .ai_router import dump_model_chain, parse_model_chain
+from .openrouter_client import OPENROUTER_BASE_URL, OpenRouterClient
 from .tmdb_client import TmdbClient
 
 _TMDB_TEST_TIMEOUT = 8.0
@@ -47,6 +51,10 @@ class SettingsService:
             cloud_ai_model=s.cloud_ai_model,
             cloud_ai_fallback_provider=s.cloud_ai_fallback_provider,
             cloud_ai_fallback_model=s.cloud_ai_fallback_model,
+            openrouter_configured=bool(_usable_secret(s.openrouter_api_key)),
+            openrouter_base_url=s.openrouter_base_url or OPENROUTER_BASE_URL,
+            openrouter_fast_chain=parse_model_chain(s.openrouter_fast_chain),
+            openrouter_smart_chain=parse_model_chain(s.openrouter_smart_chain),
             recognition_ai_enabled=s.recognition_ai_enabled,
             default_source_path=s.default_source_path,
             default_target_path=s.default_target_path,
@@ -68,6 +76,12 @@ class SettingsService:
             data["cloud_ai_fallback_provider"] = payload.cloud_ai_fallback_provider
         if payload.cloud_ai_fallback_api_key is not None and not _usable_secret(payload.cloud_ai_fallback_api_key):
             data.pop("cloud_ai_fallback_api_key", None)
+        if payload.openrouter_api_key is not None and not _usable_secret(payload.openrouter_api_key):
+            data.pop("openrouter_api_key", None)
+        if payload.openrouter_fast_chain is not None:
+            data["openrouter_fast_chain"] = dump_model_chain(payload.openrouter_fast_chain)
+        if payload.openrouter_smart_chain is not None:
+            data["openrouter_smart_chain"] = dump_model_chain(payload.openrouter_smart_chain)
         if payload.recognition_ai_enabled is not None:
             data["recognition_ai_enabled"] = payload.recognition_ai_enabled
         await self.repo.update(data)
@@ -162,6 +176,21 @@ class SettingsService:
             if not _usable_secret(key):
                 return CloudModelsResult(success=False, models=[], message="Gemini API key is not configured.")
             return await _get_gemini_models(key)
+        if provider == "openrouter":
+            key = payload.api_key if _usable_secret(payload.api_key) else settings.openrouter_api_key
+            if not _usable_secret(key):
+                return CloudModelsResult(success=False, models=[], message="OpenRouter API key is not configured.")
+            base_url = payload.base_url or settings.openrouter_base_url or OPENROUTER_BASE_URL
+            try:
+                models = await OpenRouterClient(key, base_url).list_models()
+                settings.openrouter_last_models_cache = json.dumps(
+                    [model.model_dump() for model in models],
+                    ensure_ascii=False,
+                )
+                await self.session.commit()
+                return CloudModelsResult(success=True, models=models)
+            except Exception as exc:
+                return CloudModelsResult(success=False, models=[], message=sanitize_error_text(str(exc)))
         if provider in {"openai", "custom"}:
             key = payload.api_key if _usable_secret(payload.api_key) else settings.cloud_ai_api_key
             if not _usable_secret(key) and settings.cloud_ai_fallback_provider == provider:
@@ -199,6 +228,27 @@ class SettingsService:
                     error_type="not_configured",
                 )
             return await GeminiTitleNormalizer(key, model).preflight("gemini")
+        if provider == "openrouter":
+            key = payload.api_key if _usable_secret(payload.api_key) else settings.openrouter_api_key
+            base_url = payload.base_url or settings.openrouter_base_url or OPENROUTER_BASE_URL
+            if not _usable_secret(key):
+                return LlmPreflightCheck(
+                    ok=False,
+                    provider="openrouter",
+                    model=model,
+                    endpoint=base_url,
+                    error="OpenRouter API key is not configured.",
+                    error_type="not_configured",
+                )
+            if not model:
+                return LlmPreflightCheck(
+                    ok=False,
+                    provider="openrouter",
+                    endpoint=base_url,
+                    error="OpenRouter model is not selected.",
+                    error_type="not_configured",
+                )
+            return await OpenAICompatibleTitleNormalizer(base_url, model, key, provider_name="openrouter").preflight("local")
         if provider in {"openai", "custom"}:
             if provider == "openai" and not _usable_secret(key):
                 return LlmPreflightCheck(
@@ -246,7 +296,7 @@ async def _test_openai_compatible(base_url: str, api_key: str | None = None) -> 
         headers["Authorization"] = f"Bearer {api_key}"
     try:
         async with httpx.AsyncClient(timeout=_LOCAL_AI_TIMEOUT) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/v1/models", headers=headers)
+            resp = await client.get(_openai_compatible_url(base_url, "models"), headers=headers)
             if resp.status_code == 200:
                 return TestConnectionResult(success=True, message="AI-сервис подключён успешно")
             return TestConnectionResult(success=False, message=f"AI-сервис вернул статус {resp.status_code}")
@@ -289,7 +339,7 @@ async def _get_openai_models(base_url: str, api_key: str | None) -> CloudModelsR
     headers = {"Authorization": f"Bearer {api_key}"} if _usable_secret(api_key) else {}
     try:
         async with httpx.AsyncClient(timeout=_CLOUD_AI_TIMEOUT) as client:
-            response = await client.get(f"{base_url.rstrip('/')}/v1/models", headers=headers)
+            response = await client.get(_openai_compatible_url(base_url, "models"), headers=headers)
             if response.status_code in {400, 401, 403}:
                 return CloudModelsResult(success=False, models=[], message="OpenAI API key rejected. Check key and permissions.")
             response.raise_for_status()
@@ -321,3 +371,9 @@ def _usable_secret(value: str | None) -> bool:
     if not value or not value.strip():
         return False
     return value.strip() not in {"MediaOrganizer_API_Key", "YOUR_API_KEY", "PASTE_API_KEY_HERE"}
+
+
+def _openai_compatible_url(base_url: str, path: str) -> str:
+    base = base_url.rstrip("/")
+    prefix = "" if base.endswith("/v1") else "/v1"
+    return f"{base}{prefix}/{path.lstrip('/')}"

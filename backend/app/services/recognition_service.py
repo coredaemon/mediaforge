@@ -28,8 +28,11 @@ from .recognition_clients import (
     GeminiTitleNormalizer,
     OllamaTitleNormalizer,
     OpenAICompatibleTitleNormalizer,
+    OpenRouterChainTitleNormalizer,
     TitleNormalizerClient,
 )
+from .ai_router import parse_model_chain
+from .openrouter_client import OPENROUTER_BASE_URL
 from .scan_session_service import ScanSessionNotFoundError
 
 
@@ -265,6 +268,10 @@ class RecognitionService:
         if self.local_client is not None:
             return self.local_client
 
+        openrouter_client = _build_openrouter_client(settings, stage="fast")
+        if openrouter_client is not None:
+            return openrouter_client
+
         provider = settings.ai_provider or "none"
         if provider == "ollama":
             return OllamaTitleNormalizer(settings.ai_base_url or "http://127.0.0.1:11434", settings.ai_model)
@@ -435,6 +442,9 @@ def _build_recognition_context(item: MediaItem) -> RecognitionContext:
 
 
 def _build_primary_cloud_client(settings) -> TitleNormalizerClient | None:
+    openrouter_client = _build_openrouter_client(settings, stage="smart")
+    if openrouter_client is not None:
+        return openrouter_client
     if settings.cloud_ai_provider == "gemini" and _usable_secret(settings.cloud_ai_api_key) and settings.cloud_ai_model:
         return GeminiTitleNormalizer(settings.cloud_ai_api_key, settings.cloud_ai_model)
     if settings.cloud_ai_provider in {"openai", "custom"} and settings.cloud_ai_model:
@@ -447,6 +457,15 @@ def _build_primary_cloud_client(settings) -> TitleNormalizerClient | None:
 
 
 def _build_fallback_cloud_client(settings) -> TitleNormalizerClient | None:
+    if _usable_secret(settings.openrouter_api_key):
+        chain = parse_model_chain(settings.openrouter_smart_chain)
+        if len(chain) > 1:
+            return OpenRouterChainTitleNormalizer(
+                settings.openrouter_api_key,
+                settings.openrouter_base_url or OPENROUTER_BASE_URL,
+                chain[1:],
+                "smart-fallback",
+            )
     provider = settings.cloud_ai_fallback_provider
     model = settings.cloud_ai_fallback_model
     if not provider or provider == "none" or not model:
@@ -465,6 +484,20 @@ def _build_fallback_cloud_client(settings) -> TitleNormalizerClient | None:
             key if _usable_secret(key) else None,
         )
     return None
+
+
+def _build_openrouter_client(settings, *, stage: str) -> TitleNormalizerClient | None:
+    if not _usable_secret(settings.openrouter_api_key):
+        return None
+    chain = parse_model_chain(settings.openrouter_smart_chain if stage == "smart" else settings.openrouter_fast_chain)
+    if not chain:
+        return None
+    return OpenRouterChainTitleNormalizer(
+        settings.openrouter_api_key,
+        settings.openrouter_base_url or OPENROUTER_BASE_URL,
+        chain,
+        stage,
+    )
 
 
 def _usable_secret(value: str | None) -> bool:

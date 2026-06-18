@@ -19,6 +19,10 @@ class AppSettingsRead(BaseModel):
     cloud_ai_model: str | None
     cloud_ai_fallback_provider: str | None
     cloud_ai_fallback_model: str | None
+    openrouter_configured: bool
+    openrouter_base_url: str | None
+    openrouter_fast_chain: list[str]
+    openrouter_smart_chain: list[str]
     recognition_ai_enabled: bool
     default_source_path: str | None
     default_target_path: str | None
@@ -41,6 +45,10 @@ class AppSettingsUpdate(BaseModel):
     cloud_ai_fallback_provider: str | None = None
     cloud_ai_fallback_api_key: str | None = None
     cloud_ai_fallback_model: str | None = None
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str | None = None
+    openrouter_fast_chain: list[str] | None = None
+    openrouter_smart_chain: list[str] | None = None
     recognition_ai_enabled: bool | None = None
     default_source_path: str | None = None
     default_target_path: str | None = None
@@ -63,6 +71,10 @@ class CloudModelRead(BaseModel):
     label: str
     display_name: str | None = None
     description: str | None = None
+    context_length: int | None = None
+    pricing: dict | None = None
+    provider: str | None = None
+    is_free: bool | None = None
     supported_generation_methods: list[str] = []
 
 

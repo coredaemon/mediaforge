@@ -11,6 +11,7 @@ RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 def sanitize_error_text(value: str) -> str:
     value = re.sub(r"([?&]key=)[^&\s']+", r"\1[redacted]", value)
+    value = re.sub(r"(\bkey=)[^&\s']+", r"\1[redacted]", value)
     value = re.sub(r"(Bearer\s+)[A-Za-z0-9._-]+", r"\1[redacted]", value, flags=re.IGNORECASE)
     return value
 

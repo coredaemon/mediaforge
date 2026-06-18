@@ -197,6 +197,20 @@ TMDB TV matching uses `/search/tv`, `/tv/{id}`, `/tv/{id}/season/{season_number}
 
 TV planning creates a normal `OperationPlan`, but every TV operation has `tv_apply_disabled=true`. `ApplyService` rejects such plans before filesystem writes. Target paths are direct under the selected target root and do not add `TV Shows`.
 
+## OpenRouter AI Router
+
+The primary AI path is OpenRouter-first. `AppSettings` stores `openrouter_api_key`, `openrouter_base_url`, `openrouter_fast_chain`, `openrouter_smart_chain`, and an optional model cache. Secret fields are write-only and protected from empty-string or placeholder overwrites.
+
+`OpenRouterClient` wraps the OpenAI-compatible API at `https://openrouter.ai/api/v1`, including `/models` discovery and `/chat/completions`. `AiChainExecutor` tries selected models in order and records attempts, selected model, duration, JSON validity, and sanitized errors. It advances to the next model on network errors, retryable status codes, invalid JSON, empty responses, or task-specific quality-gate failures.
+
+The fast chain powers movie draft normalization and TV folder grouping. The smart chain powers movie cloud refinement and TV structure audit. When OpenRouter is not configured, the existing Ollama/Gemini/OpenAI-compatible clients remain as legacy fallback.
+
+## Folder Classification
+
+`MediaClassificationService` classifies each scan session as `movies`, `tv`, `mixed`, or `unknown` from scanned file rows. It counts total files, video/subtitle/sidecar files, nested folders, known video extensions, ignored extensions, movie-like year patterns, and TV-like season/episode patterns. Low-confidence or unknown results are marked `needs_user_decision`.
+
+Scanner diagnostics are exposed on the session page. When files are found but video count is zero, the UI warns that extensions or supported formats should be checked. The scanner recognizes common TV/video formats case-insensitively, including `.ts`, `.m2ts`, `.mts`, `.webm`, and `.flv`.
+
 Before validation and apply:
 
 - Source paths for `MOVE_FILE` must stay inside `scan_session.source_path`.

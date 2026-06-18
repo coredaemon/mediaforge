@@ -2,7 +2,21 @@ from pathlib import Path
 
 from ..models.enums import MediaFileKind
 
-VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".wmv"}
+VIDEO_EXTENSIONS = {
+    ".avi",
+    ".flv",
+    ".m2ts",
+    ".m4v",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+    ".mts",
+    ".ts",
+    ".webm",
+    ".wmv",
+}
 SUBTITLE_EXTENSIONS = {".ass", ".idx", ".srt", ".ssa", ".sub", ".vtt"}
 SIDECAR_EXTENSIONS = {".jpeg", ".jpg", ".nfo", ".png", ".webp"}
 
