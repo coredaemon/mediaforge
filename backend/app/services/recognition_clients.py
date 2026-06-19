@@ -237,6 +237,7 @@ class OpenRouterChainTitleNormalizer:
                 response_valid_json=True,
                 message=f"OpenRouter {self.stage} chain responded successfully",
                 attempts=len(result.attempted_models),
+                attempted_models=_attempts_payload(result.attempted_models),
             )
         return LlmPreflightCheck(
             ok=False,
@@ -249,6 +250,7 @@ class OpenRouterChainTitleNormalizer:
             human_message=result.human_message,
             error_type="chain_failed",
             attempts=max(1, len(result.attempted_models)),
+            attempted_models=_attempts_payload(result.attempted_models),
             retryable=True,
         )
 
@@ -442,6 +444,23 @@ def _sanitize_preview(text: str) -> str:
 
 def _duration_ms(started: float) -> int:
     return max(0, int((time.perf_counter() - started) * 1000))
+
+
+def _attempts_payload(attempts) -> list[dict[str, Any]]:
+    return [
+        {
+            "model": attempt.model,
+            "ok": attempt.ok,
+            "duration_ms": attempt.duration_ms,
+            "attempts": attempt.attempts,
+            "http_status": attempt.http_status,
+            "error_type": attempt.error_type,
+            "error": attempt.error,
+            "human_message": attempt.human_message,
+            "response_valid_json": attempt.response_valid_json,
+        }
+        for attempt in attempts
+    ]
 
 
 def _openai_compatible_url(base_url: str, path: str) -> str:

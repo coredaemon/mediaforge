@@ -105,6 +105,48 @@ async def test_openrouter_chat_completion_success(monkeypatch) -> None:
     assert result.model == "model-a"
 
 
+async def test_openrouter_chat_does_not_retry_429(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_client_post(self, url, **kwargs):
+        nonlocal calls
+        calls += 1
+        response = httpx.Response(429, request=httpx.Request("POST", url))
+        raise httpx.HTTPStatusError("429", request=response.request, response=response)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_client_post)
+
+    with pytest.raises(RuntimeError) as exc:
+        await OpenRouterClient("or-key").chat_json(model="limited", messages=[{"role": "user", "content": "x"}])
+
+    assert calls == 1
+    assert getattr(exc.value, "status_code") == 429
+    assert getattr(exc.value, "attempts") == 1
+
+
+async def test_openrouter_chat_retries_503_once(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_client_post(self, url, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            response = httpx.Response(503, request=httpx.Request("POST", url))
+            raise httpx.HTTPStatusError("503", request=response.request, response=response)
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"choices": [{"message": {"content": '{"ok": true}'}}]},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_client_post)
+
+    result = await OpenRouterClient("or-key").chat_json(model="temporary", messages=[{"role": "user", "content": "x"}])
+
+    assert calls == 2
+    assert result.attempts == 2
+
+
 async def test_ai_chain_executor_falls_back_on_invalid_json(monkeypatch) -> None:
     calls: list[str] = []
 
@@ -210,6 +252,72 @@ async def test_openrouter_cloud_test_uses_full_chain(db_session, monkeypatch) ->
     assert result.attempts == 2
     assert calls == ["missing", "backup"]
     assert result.attempted_models[0]["ok"] is False
+
+
+async def test_ai_chain_executor_uses_fourth_model_after_first_three_fail(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_chat_json(self, *, model, messages):
+        from backend.app.services.openrouter_client import OpenRouterChatResult
+
+        calls.append(model)
+        if model != "cheap-paid":
+            raise RuntimeError("429 rate limit exceeded")
+        return OpenRouterChatResult(model=model, content='{"ok": true}', attempts=1, duration_ms=4, raw_json={})
+
+    monkeypatch.setattr(OpenRouterClient, "chat_json", fake_chat_json)
+    result = await AiChainExecutor(OpenRouterClient("or-key")).run_json(
+        models=["free-a", "free-b", "free-c", "cheap-paid"],
+        messages=[{"role": "user", "content": "x"}],
+        quality_gate=lambda data: (data.get("ok") is True, "not ok"),
+    )
+
+    assert result.ok is True
+    assert result.model == "cheap-paid"
+    assert calls == ["free-a", "free-b", "free-c", "cheap-paid"]
+    assert [attempt.model for attempt in result.attempted_models] == calls
+
+
+async def test_ai_chain_executor_skips_empty_fourth_model(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_chat_json(self, *, model, messages):
+        from backend.app.services.openrouter_client import OpenRouterChatResult
+
+        calls.append(model)
+        if model == "bad":
+            raise RuntimeError("404 model not found")
+        return OpenRouterChatResult(model=model, content='{"ok": true}', attempts=1, duration_ms=4, raw_json={})
+
+    monkeypatch.setattr(OpenRouterClient, "chat_json", fake_chat_json)
+    result = await AiChainExecutor(OpenRouterClient("or-key")).run_json(
+        models=["bad", "", "good", ""],
+        messages=[{"role": "user", "content": "x"}],
+        quality_gate=lambda data: (data.get("ok") is True, "not ok"),
+    )
+
+    assert result.ok is True
+    assert calls == ["bad", "good"]
+
+
+async def test_ai_chain_executor_stops_on_auth_error(monkeypatch) -> None:
+    calls: list[str] = []
+
+    async def fake_chat_json(self, *, model, messages):
+        from backend.app.services.openrouter_client import OpenRouterChatError
+
+        calls.append(model)
+        raise OpenRouterChatError("401 unauthorized", status_code=401, attempts=1, duration_ms=2)
+
+    monkeypatch.setattr(OpenRouterClient, "chat_json", fake_chat_json)
+    result = await AiChainExecutor(OpenRouterClient("or-key")).run_json(
+        models=["auth-bad", "should-not-run"],
+        messages=[{"role": "user", "content": "x"}],
+    )
+
+    assert result.ok is False
+    assert calls == ["auth-bad"]
+    assert result.attempted_models[0].error_type == "auth_error"
 
 
 async def test_ai_chain_executor_returns_human_message_when_all_models_fail(monkeypatch) -> None:

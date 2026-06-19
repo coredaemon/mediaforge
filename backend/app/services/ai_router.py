@@ -17,6 +17,9 @@ class AiModelAttempt:
     model: str
     ok: bool
     duration_ms: int
+    attempts: int = 1
+    http_status: int | None = None
+    error_type: str | None = None
     error: str | None = None
     human_message: str | None = None
     response_valid_json: bool = False
@@ -83,7 +86,13 @@ class AiChainExecutor:
                         )
                         continue
                 attempts.append(
-                    AiModelAttempt(model=model, ok=True, duration_ms=chat.duration_ms, response_valid_json=True)
+                    AiModelAttempt(
+                        model=model,
+                        ok=True,
+                        duration_ms=chat.duration_ms,
+                        attempts=chat.attempts,
+                        response_valid_json=True,
+                    )
                 )
                 return AiRouterResult(
                     ok=True,
@@ -96,16 +105,32 @@ class AiChainExecutor:
                 )
             except Exception as exc:
                 last_error = sanitize_error_text(str(exc))
-                human_message = humanize_ai_error(last_error, classify_error_type(last_error))
+                status_code = getattr(exc, "status_code", None)
+                error_type = _classify_chain_error(exc, last_error)
+                human_message = humanize_ai_error(last_error, status_code=status_code, error_type=error_type)
                 attempts.append(
                     AiModelAttempt(
                         model=model,
                         ok=False,
-                        duration_ms=max(0, int((time.perf_counter() - model_started) * 1000)),
+                        duration_ms=getattr(exc, "duration_ms", None)
+                        or max(0, int((time.perf_counter() - model_started) * 1000)),
+                        attempts=getattr(exc, "attempts", 1),
+                        http_status=status_code,
+                        error_type=error_type,
                         error=last_error,
                         human_message=f"{human_message} Пробуем следующую модель в цепочке.",
                     )
                 )
+                if error_type == "auth_error":
+                    return AiRouterResult(
+                        ok=False,
+                        provider="openrouter",
+                        model=None,
+                        attempted_models=attempts,
+                        human_message=human_message,
+                        technical_error=last_error,
+                        duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+                    )
         return AiRouterResult(
             ok=False,
             provider="openrouter",
@@ -167,6 +192,32 @@ def dump_model_chain(value: list[str] | None) -> str | None:
     if value is None:
         return None
     return json.dumps([item.strip() for item in value if item.strip()], ensure_ascii=False)
+
+
+def _classify_chain_error(exc: Exception, text: str) -> str:
+    status_code = getattr(exc, "status_code", None)
+    if status_code == 400:
+        return "invalid_request"
+    if status_code in {401, 403}:
+        return "auth_error"
+    if status_code == 404:
+        return "model_not_found"
+    if status_code == 429:
+        return "rate_limited"
+    if status_code in {500, 502, 503, 504}:
+        return "temporary_unavailable"
+    lowered = text.lower()
+    if "401" in lowered or "403" in lowered:
+        return "auth_error"
+    if "404" in lowered:
+        return "model_not_found"
+    if "429" in lowered:
+        return "rate_limited"
+    if any(code in lowered for code in ("500", "502", "503", "504")):
+        return "temporary_unavailable"
+    if "timeout" in lowered:
+        return "timeout"
+    return classify_error_type(exc)
 
 
 def _sanitize_preview(value: str) -> str:

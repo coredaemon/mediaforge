@@ -485,6 +485,9 @@ export interface LlmPreflightCheck {
     model: string;
     ok: boolean;
     duration_ms: number;
+    attempts?: number;
+    http_status?: number | null;
+    error_type?: string | null;
     error?: string | null;
     human_message?: string | null;
     response_valid_json?: boolean;

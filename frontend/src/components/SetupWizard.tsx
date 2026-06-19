@@ -59,6 +59,9 @@ interface ChainAttempt {
   model: string;
   ok: boolean;
   durationMs: number;
+  attempts?: number;
+  httpStatus?: number | null;
+  errorType?: string | null;
   error?: string | null;
   humanMessage?: string | null;
   responseValidJson?: boolean;
@@ -74,6 +77,9 @@ function cloudTestFromResult(result: LlmPreflightCheck): CloudTestState {
       model: attempt.model,
       ok: attempt.ok,
       durationMs: attempt.duration_ms,
+      attempts: attempt.attempts,
+      httpStatus: attempt.http_status,
+      errorType: attempt.error_type,
       error: attempt.error,
       humanMessage: attempt.human_message,
       responseValidJson: attempt.response_valid_json,
@@ -863,10 +869,10 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                     </button>
                   </div>
                   <h4>Цепочка быстрого анализа</h4>
-                  {[0, 1, 2].map((index) => (
+                  {[0, 1, 2, 3].map((index) => (
                     <ModelSearchSelect
                       key={`fast-${index}`}
-                      label={`Модель ${index + 1}`}
+                      label={index === 3 ? "Резервная дешёвая модель" : `Модель ${index + 1}`}
                       value={data.openrouterFastChain[index] ?? ""}
                       models={openrouterModels}
                       placeholder="google/gemini-2.0-flash-exp:free"
@@ -877,6 +883,9 @@ export function SetupWizard({ editMode = false, onComplete }: SetupWizardProps) 
                       }}
                     />
                   ))}
+                  <small className="muted">
+                    Резервная модель используется только если первые три модели быстрого анализа недоступны или вернули плохой ответ.
+                  </small>
                   <div className="form-actions">
                     <button
                       type="button"

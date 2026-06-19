@@ -7,8 +7,8 @@ from typing import Any
 import httpx
 
 from ..schemas.settings import CloudModelRead
-from ..utils.ai_errors import sanitize_error_text
-from ..utils.ai_retry import post_with_retry
+from ..utils.ai_errors import extract_status_code, sanitize_error_text
+from ..utils.ai_retry import RetryExhaustedError, post_with_retry
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _TIMEOUT_SECONDS = 90.0
@@ -21,6 +21,14 @@ class OpenRouterChatResult:
     attempts: int
     duration_ms: int
     raw_json: dict[str, Any]
+
+
+class OpenRouterChatError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int | None = None, attempts: int = 1, duration_ms: int = 0) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.attempts = attempts
+        self.duration_ms = duration_ms
 
 
 class OpenRouterClient:
@@ -75,11 +83,25 @@ class OpenRouterClient:
                 timeout=_TIMEOUT_SECONDS,
                 json=payload,
                 headers=self._headers(),
+                max_attempts=_max_attempts_for_model_error,
             )
             data = response.json()
             content = data["choices"][0]["message"]["content"]
+        except RetryExhaustedError as exc:
+            original = exc.original
+            raise OpenRouterChatError(
+                sanitize_error_text(str(original)),
+                status_code=extract_status_code(original),
+                attempts=exc.attempts,
+                duration_ms=exc.duration_ms,
+            ) from exc
         except Exception as exc:
-            raise RuntimeError(sanitize_error_text(str(exc))) from exc
+            raise OpenRouterChatError(
+                sanitize_error_text(str(exc)),
+                status_code=extract_status_code(exc),
+                attempts=1,
+                duration_ms=max(0, int((time.perf_counter() - started) * 1000)),
+            ) from exc
         return OpenRouterChatResult(
             model=model,
             content=content,
@@ -115,3 +137,10 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _max_attempts_for_model_error(exc: Exception) -> int:
+    status = extract_status_code(exc)
+    if status in {400, 401, 403, 404, 429}:
+        return 1
+    return 2

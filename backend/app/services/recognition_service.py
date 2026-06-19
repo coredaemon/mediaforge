@@ -115,14 +115,7 @@ class RecognitionService:
         local = (
             await local_client.preflight("local")
             if local_client
-            else LlmPreflightCheck(
-                ok=False,
-                provider=settings.ai_provider or "none",
-                model=settings.ai_model,
-                endpoint=settings.ai_base_url,
-                error="Local LLM is not configured.",
-                error_type="not_configured",
-            )
+            else _missing_fast_preflight(settings)
         )
         cloud = (
             await cloud_client.preflight("gemini")
@@ -143,10 +136,17 @@ class RecognitionService:
         if cloud_fallback is not None:
             cloud_fallback = enrich_preflight_check(cloud_fallback)
         cloud_ok = cloud.ok or (cloud_fallback.ok if cloud_fallback else False)
+        fast_nonfatal = _fast_openrouter_failure_is_nonfatal(local)
+        ok = (local.ok and cloud_ok) or (fast_nonfatal and cloud_ok)
         warning = build_preflight_warning(cloud, cloud_fallback)
-        message = build_preflight_failure_message(local, cloud, cloud_fallback) if not (local.ok and cloud_ok) else None
+        if fast_nonfatal and cloud_ok and not local.ok:
+            warning = (
+                "Быстрый AI-анализ временно недоступен, но умная AI-проверка или запасная модель работает. "
+                "Анализ можно продолжить."
+            )
+        message = build_preflight_failure_message(local, cloud, cloud_fallback) if not ok else None
         return RecognitionPreflightResult(
-            ok=local.ok and cloud_ok,
+            ok=ok,
             local=local,
             cloud=cloud,
             cloud_fallback=cloud_fallback,
@@ -413,6 +413,36 @@ def _missing_cloud_preflight(provider: str | None, model: str | None, key: str |
         provider=provider,
         model=model,
         error="Cloud AI client is not configured.",
+        error_type="not_configured",
+    )
+
+
+def _fast_openrouter_failure_is_nonfatal(check: LlmPreflightCheck) -> bool:
+    if check.ok or check.provider != "openrouter":
+        return False
+    if check.error_type == "auth_error":
+        return False
+    if check.error_type == "not_configured":
+        return False
+    return True
+
+
+def _missing_fast_preflight(settings) -> LlmPreflightCheck:
+    if _usable_secret(settings.openrouter_api_key) and parse_model_chain(settings.openrouter_smart_chain):
+        return LlmPreflightCheck(
+            ok=False,
+            provider="openrouter",
+            endpoint=settings.openrouter_base_url or OPENROUTER_BASE_URL,
+            error="OpenRouter fast chain is empty.",
+            error_type="skipped",
+            human_message="Быстрая цепочка OpenRouter не настроена. MediaForge проверит умную цепочку.",
+        )
+    return LlmPreflightCheck(
+        ok=False,
+        provider=settings.ai_provider or "none",
+        model=settings.ai_model,
+        endpoint=settings.ai_base_url,
+        error="Local LLM is not configured.",
         error_type="not_configured",
     )
 

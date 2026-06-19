@@ -118,6 +118,87 @@ async def test_preflight_ok_when_primary_503_fallback_ok(db_session: AsyncSessio
     assert "временно недоступна" in (result.warning or "").lower()
 
 
+async def test_preflight_warns_when_openrouter_fast_fails_but_smart_ok(db_session: AsyncSession) -> None:
+    fast = FakeTitleNormalizer()
+    smart = FakeTitleNormalizer()
+
+    async def fast_preflight(expected_provider: str) -> LlmPreflightCheck:
+        return LlmPreflightCheck(
+            ok=False,
+            provider="openrouter",
+            model="free/limited",
+            error="429 Too Many Requests",
+            error_type="chain_failed",
+            human_message="Fast chain failed",
+            retryable=True,
+            attempts=1,
+            attempted_models=[
+                {
+                    "model": "free/limited",
+                    "ok": False,
+                    "duration_ms": 3,
+                    "http_status": 429,
+                    "error_type": "rate_limited",
+                }
+            ],
+        )
+
+    fast.preflight = fast_preflight  # type: ignore[method-assign]
+
+    service = RecognitionService(db_session)
+
+    async def patched_get(self, use_gemini: bool, use_fallback: bool = False):
+        if use_gemini:
+            return None if use_fallback else smart
+        return fast
+
+    original_get = RecognitionService._get_client
+    RecognitionService._get_client = patched_get  # type: ignore[method-assign]
+    try:
+        result = await service.preflight()
+    finally:
+        RecognitionService._get_client = original_get  # type: ignore[method-assign]
+
+    assert result.ok
+    assert result.warning
+    assert result.local.attempted_models[0]["model"] == "free/limited"
+
+
+async def test_preflight_blocks_when_openrouter_fast_auth_fails(db_session: AsyncSession) -> None:
+    fast = FakeTitleNormalizer()
+    smart = FakeTitleNormalizer()
+
+    async def fast_preflight(expected_provider: str) -> LlmPreflightCheck:
+        return LlmPreflightCheck(
+            ok=False,
+            provider="openrouter",
+            model="free/auth",
+            error="401 Unauthorized",
+            error_type="auth_error",
+            human_message="Auth failed",
+            attempts=1,
+        )
+
+    fast.preflight = fast_preflight  # type: ignore[method-assign]
+
+    service = RecognitionService(db_session)
+
+    async def patched_get(self, use_gemini: bool, use_fallback: bool = False):
+        if use_gemini:
+            return None if use_fallback else smart
+        return fast
+
+    original_get = RecognitionService._get_client
+    RecognitionService._get_client = patched_get  # type: ignore[method-assign]
+    try:
+        result = await service.preflight()
+    finally:
+        RecognitionService._get_client = original_get  # type: ignore[method-assign]
+
+    assert not result.ok
+    assert result.message
+
+
 async def test_preflight_fails_when_both_cloud_503(db_session: AsyncSession) -> None:
     async def fail_preflight(expected_provider: str) -> LlmPreflightCheck:
         return LlmPreflightCheck(

@@ -10,6 +10,7 @@ from backend.app.api.routes.scan_sessions import get_tmdb_client
 from backend.app.main import app
 from backend.app.models.apply_operation_log import ApplyOperationLog
 from backend.app.models.apply_run import ApplyRun
+from backend.app.models.enums import MediaFileKind
 from backend.app.models.media_file import MediaFile
 from backend.app.models.media_item import MediaItem
 from backend.app.models.operation_plan import OperationPlan
@@ -17,6 +18,10 @@ from backend.app.models.plan_operation import PlanOperation
 from backend.app.models.processed_media_record import ProcessedMediaRecord
 from backend.app.models.recognition_memory import RecognitionCorrection
 from backend.app.models.tmdb_match_candidate import TmdbMatchCandidate
+from backend.app.models.tv_episode import TvEpisode
+from backend.app.models.tv_grouping_run import TvGroupingRun
+from backend.app.models.tv_season import TvSeason
+from backend.app.models.tv_show import TvShow
 from backend.app.schemas.recognition import RecognitionCorrectionCreate
 from backend.app.schemas.review import BulkApproveRequest
 from backend.app.schemas.tmdb import TmdbSearchResult
@@ -183,6 +188,55 @@ async def test_delete_session_after_apply_cascades_apply_tables(db_session: Asyn
     assert len(items_after) == 0
 
     app.dependency_overrides.pop(get_tmdb_client, None)
+
+
+async def test_delete_session_after_tv_grouping_cascades_tv_tables(db_session: AsyncSession, tmp_path) -> None:
+    session_id, media_file = await _seed_full_session(db_session, tmp_path)
+    db_file = MediaFile(
+        scan_session_id=session_id,
+        path=str(media_file),
+        file_name=media_file.name,
+        extension=".mkv",
+        kind=MediaFileKind.VIDEO,
+        is_video=True,
+    )
+    db_session.add(db_file)
+    await db_session.flush()
+    show = TvShow(scan_session_id=session_id, local_group_id="show-1", title="Example Show")
+    db_session.add(show)
+    await db_session.flush()
+    season = TvSeason(show_id=show.id, season_number=1)
+    db_session.add(season)
+    await db_session.flush()
+    db_session.add(
+        TvEpisode(
+            show_id=show.id,
+            season_id=season.id,
+            source_file_id=db_file.id,
+            season_number=1,
+            episode_number=1,
+            source_path=str(media_file),
+            target_path=str(tmp_path / "library" / "Example Show" / "S01E01.mkv"),
+        )
+    )
+    db_session.add(
+        TvGroupingRun(
+            scan_session_id=session_id,
+            show_id=show.id,
+            provider="openrouter",
+            model="fast/model",
+            status="success",
+        )
+    )
+    await db_session.commit()
+
+    await ScanSessionService(db_session).delete_scan_session(session_id)
+
+    assert await db_session.scalar(select(func.count()).select_from(TvEpisode)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(TvSeason)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(TvGroupingRun)) == 0
+    assert await db_session.scalar(select(func.count()).select_from(TvShow)) == 0
+    assert media_file.exists()
 
 
 def test_delete_session_via_api_after_apply(client: TestClient, tmp_path) -> None:

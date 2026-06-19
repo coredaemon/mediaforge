@@ -187,6 +187,22 @@ function PreflightCheckBlock({
         </small>
       ) : null}
       {shortMessage ? <small className="error-text">{shortMessage}</small> : null}
+      {check?.attempted_models && check.attempted_models.length > 0 ? (
+        <ul className="chain-attempts">
+          {check.attempted_models.map((attempt, index) => (
+            <li key={`${attempt.model}-${index}`} className={attempt.ok ? "ok" : "failed"}>
+              <strong>{index + 1}.</strong> {attempt.model}
+              <span className="muted">
+                {" "}
+                {attempt.http_status ? `${attempt.http_status} · ` : ""}
+                {attempt.ok ? "успешно" : attempt.error_type ?? "ошибка"} · {attempt.duration_ms} мс
+                {attempt.attempts && attempt.attempts > 1 ? ` · ${attempt.attempts} попытки` : ""}
+              </span>
+              {!attempt.ok && attempt.human_message ? <span> — {attempt.human_message}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {check?.error ? (
         <details className="technical-error">
           <summary>Технические детали</summary>

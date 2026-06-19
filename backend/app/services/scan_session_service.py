@@ -10,6 +10,7 @@ from ..repositories.operation_plan_repository import OperationPlanRepository
 from ..repositories.plan_operation_repository import PlanOperationRepository
 from ..repositories.recognition_memory_repository import RecognitionMemoryRepository
 from ..repositories.scan_session_repository import ScanSessionRepository
+from ..repositories.tv_repository import TvRepository
 
 
 class ScanSessionNotFoundError(LookupError):
@@ -26,6 +27,7 @@ class ScanSessionService:
         self.operation_plans = OperationPlanRepository(session)
         self.plan_operations = PlanOperationRepository(session)
         self.apply_runs = ApplyRunRepository(session)
+        self.tv = TvRepository(session)
 
     async def create_scan_session(self, source_path: str, target_path: str) -> ScanSession:
         scan_session = await self.scan_sessions.create(source_path=source_path, target_path=target_path)
@@ -58,6 +60,7 @@ class ScanSessionService:
             await self.plan_operations.delete_for_plan(plan.id)
             await self.operation_plans.delete(plan)
 
+        await self.tv.delete_for_scan_session(scan_session_id)
         await self.media_files.delete_for_scan_session(scan_session_id)
         await self.scan_sessions.delete(scan_session)
         await self.session.commit()
