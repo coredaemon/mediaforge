@@ -134,7 +134,6 @@ def _tv_payload(show, *, season=None, episode=None) -> dict:
         season_number = episode.season_number
     return {
         "media_type": "tv",
-        "tv_apply_disabled": True,
         "tv_show_id": show.id,
         "tv_show_title": show.title,
         "tv_show_year": show.year,

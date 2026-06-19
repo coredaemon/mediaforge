@@ -65,9 +65,6 @@ function formatPydanticErrors(errors: PydanticError[]): string {
 }
 
 function formatHttpError(status: number, detail?: string): string {
-  if (detail === "tv_apply_disabled" || detail?.includes("TV apply is intentionally disabled")) {
-    return "Применение сериалов пока отключено в этой версии. Проверьте предварительный план, файлы не изменены.";
-  }
   if (detail) return detail;
   if (status === 404) return "Сессия не найдена";
   if (status === 409) return "Операция не может быть выполнена из-за конфликта данных.";

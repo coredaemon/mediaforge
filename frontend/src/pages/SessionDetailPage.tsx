@@ -70,7 +70,7 @@ import type {
   TvShow,
 } from "../types";
 import { defaultSelectedIds, isBulkSelectable } from "../utils/bulkSelection";
-import { buildPlanSummary } from "../utils/planSummary";
+import { buildPlanSummary, hasTvOperations } from "../utils/planSummary";
 import { loadSection } from "../utils/sectionLoad";
 import { candidatePosterUrl } from "../utils/tmdb";
 
@@ -284,6 +284,7 @@ export function SessionDetailPage() {
   const [candidatesModalOpen, setCandidatesModalOpen] = useState(false);
 
   const latestPlanId = plans[0]?.id ?? null;
+  const activePlanHasTvOperations = hasTvOperations(operations);
 
   const loadApplyRuns = useCallback(async (planId: number | null) => {
     if (planId === null) {
@@ -1040,6 +1041,7 @@ export function SessionDetailPage() {
         open={showApplyModal}
         busy={busy}
         checked={applyConfirmChecked}
+        variant={activePlanHasTvOperations ? "tv" : "movie"}
         onCheckedChange={setApplyConfirmChecked}
         onConfirm={() => void handleApplyPlan()}
         onCancel={() => setShowApplyModal(false)}

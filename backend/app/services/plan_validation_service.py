@@ -142,6 +142,14 @@ class PlanValidationService:
                 return ValidationStatus.OK, None
             if target.exists():
                 return ValidationStatus.CONFLICT, f"Target file already exists: {target}"
+            payload = operation.payload_json or {}
+            if payload.get("media_type") == "tv":
+                if payload.get("nfo_type") == "tvshow" and not payload.get("tv_show_id"):
+                    return ValidationStatus.CONFLICT, "TV show NFO payload missing tv_show_id"
+                if payload.get("nfo_type") == "episode" and (
+                    not payload.get("tv_show_id") or not payload.get("tv_episode_id")
+                ):
+                    return ValidationStatus.CONFLICT, "TV episode NFO payload missing ids"
             return ValidationStatus.OK, None
 
         return ValidationStatus.OK, None

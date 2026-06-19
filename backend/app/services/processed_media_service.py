@@ -9,6 +9,8 @@ from ..models.enums import MediaItemStatus, MediaType
 from ..models.media_file import MediaFile
 from ..models.media_item import MediaItem
 from ..models.processed_media_record import ProcessedMediaRecord
+from ..models.tv_episode import TvEpisode
+from ..models.tv_show import TvShow
 from ..repositories.processed_media_repository import ProcessedMediaRepository
 from ..utils.file_identity import build_file_identity_key, file_identity_matches
 from ..utils.tmdb_images import tmdb_image_url
@@ -153,6 +155,69 @@ class ProcessedMediaService:
             last_planned_at=now if planned else None,
             last_session_id=session_id,
             last_media_item_id=item.id,
+        )
+        return await self.records.upsert(record)
+
+    async def record_from_tv_episode(
+        self,
+        show: TvShow,
+        episode: TvEpisode,
+        media_file: MediaFile | None,
+        *,
+        session_id: int | None = None,
+        target_path: str | None = None,
+    ) -> ProcessedMediaRecord | None:
+        if media_file is None or media_file.size_bytes is None:
+            return None
+
+        identity_key = build_file_identity_key(
+            path=media_file.path,
+            file_name=media_file.file_name,
+            size_bytes=media_file.size_bytes,
+            modified_at=media_file.modified_at,
+        )
+        now = datetime.now(UTC)
+        title = episode.title or f"S{episode.season_number:02d}E{episode.episode_number:02d}"
+        record = ProcessedMediaRecord(
+            source_path=target_path or media_file.path,
+            file_name=media_file.file_name,
+            file_stem=Path(media_file.file_name).stem,
+            file_extension=media_file.extension,
+            file_size=media_file.size_bytes,
+            modified_at=media_file.modified_at,
+            file_identity_key=identity_key,
+            media_type="tv",
+            status="matched",
+            clean_title=title,
+            year=show.year,
+            season=episode.season_number,
+            episode=episode.episode_number,
+            tv_show_title=show.title,
+            tv_season_number=episode.season_number,
+            tv_episode_number=episode.episode_number,
+            tmdb_show_id=show.tmdb_id,
+            tmdb_episode_id=episode.tmdb_episode_id,
+            tmdb_id=show.tmdb_id,
+            tmdb_media_type="tv",
+            matched_title=show.title,
+            match_confidence=episode.confidence or show.confidence,
+            imdb_id=show.imdb_id,
+            tvdb_id=show.tvdb_id,
+            wikidata_id=show.wikidata_id,
+            localized_title=title,
+            localized_overview=episode.overview,
+            tmdb_original_title=show.original_title,
+            poster_path=show.poster_path,
+            backdrop_path=show.backdrop_path,
+            poster_url=show.poster_url or tmdb_image_url(show.poster_path),
+            backdrop_url=show.backdrop_url or tmdb_image_url(show.backdrop_path, "w780"),
+            metadata_language=show.language,
+            match_source=episode.match_source or show.match_source,
+            last_seen_at=now,
+            last_scanned_at=now,
+            last_recognized_at=now,
+            last_planned_at=now,
+            last_session_id=session_id,
         )
         return await self.records.upsert(record)
 

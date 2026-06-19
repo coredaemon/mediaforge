@@ -89,7 +89,7 @@ def test_create_plan_without_matched_items_returns_400(client: TestClient, tmp_p
     assert "no matched media items" in response.json()["detail"].lower()
 
 
-def test_tv_plan_apply_api_returns_disabled_code(client: TestClient, tmp_path) -> None:
+def test_tv_plan_apply_api_applies_safe_tv_operations(client: TestClient, tmp_path) -> None:
     fake_client = FakeTmdbClient(
         tv_results=[TmdbSearchResult(tmdb_id=123, media_type="tv", title="Test Show", year=2024)],
         tv_details={123: TmdbDetailsResult(tmdb_id=123, media_type="tv", title="Test Show", year=2024)},
@@ -129,9 +129,18 @@ def test_tv_plan_apply_api_returns_disabled_code(client: TestClient, tmp_path) -
     plan_id = plan_response.json()["id"]
     apply_response = client.post(f"/operation-plans/{plan_id}/apply", json={"confirm": True})
 
-    assert apply_response.status_code == 400
-    detail = apply_response.json()["detail"]
-    assert detail["error_code"] == "tv_apply_disabled"
-    assert "Применение сериалов пока отключено" in detail["message"]
+    assert apply_response.status_code == 200
+    result = apply_response.json()
+    assert result["status"] == "APPLIED"
+    assert result["failed_operations"] == 0
+    assert not (source_path / "Test Show" / "Season 01" / "Test Show S01E01.mkv").exists()
+    moved_videos = list(target_path.rglob("*.mkv"))
+    assert len(moved_videos) == 1
+    assert any(path.name == "tvshow.nfo" for path in target_path.rglob("*.nfo"))
+    assert moved_videos[0].with_suffix(".nfo").exists()
+
+    second_apply_response = client.post(f"/operation-plans/{plan_id}/apply", json={"confirm": True})
+    assert second_apply_response.status_code == 400
+    assert "already been applied" in second_apply_response.json()["detail"]
 
     app.dependency_overrides.pop(get_tmdb_client, None)

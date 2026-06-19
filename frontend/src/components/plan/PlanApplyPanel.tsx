@@ -52,6 +52,22 @@ function renderOperation(op: PlanOperation) {
   );
 }
 
+function formatApplyResult(result: PlanApplyResult, summary: ReturnType<typeof buildPlanSummary>, tvPlan: boolean): string {
+  const status = labelPlanStatus(result.status);
+  const error = result.error_message ? ` · ${result.error_message}` : "";
+  if (!tvPlan) {
+    return `Выполнено ${result.done_operations} из ${result.total_operations}. Статус: ${status}${error}`;
+  }
+  return [
+    `Сериалов: ${summary.tvShows}`,
+    `перенесено серий: ${summary.moves}`,
+    `NFO: ${summary.nfoWrites}`,
+    `изображений: ${summary.imageDownloads}`,
+    `выполнено операций: ${result.done_operations}/${result.total_operations}`,
+    `статус: ${status}${error}`,
+  ].join(" · ");
+}
+
 export function PlanApplyPanel({
   plans,
   selectedPlanId,
@@ -71,7 +87,7 @@ export function PlanApplyPanel({
   const summary = buildPlanSummary(operations, items, validation?.conflict_count ?? 0);
   const tvPlan = hasTvOperations(operations);
   const tvOnly = tvPlan && summary.movies === 0;
-  const applyAllowed = canApplyPlan(activePlan, validation, operations.length) && !tvPlan;
+  const applyAllowed = canApplyPlan(activePlan, validation, operations.length);
   const grouped = groupOperationsByItem(operations.filter((op) => !isTvOperation(op)));
   const tvGroups = groupTvOperationsByShow(operations);
   const itemMap = new Map(items.map((item) => [item.id, item]));
@@ -84,7 +100,7 @@ export function PlanApplyPanel({
           <p className="muted plan-summary-line">{formatPlanSummaryLine(summary)}</p>
           {tvPlan ? (
             <p className="muted">
-              Сейчас можно проверить, как MediaForge распознал сериалы, сезоны, эпизоды и будущие пути. Применение сериалов пока отключено.
+              Проверьте сериалный план. После подтверждения MediaForge создаст папки, перенесёт серии, запишет metadata и скачает изображения.
             </p>
           ) : (
             <p className="muted">
@@ -100,8 +116,12 @@ export function PlanApplyPanel({
             </p>
           ) : null}
           {tvPlan ? (
-            <p className="message warning">
-              Это предварительный план сериалов. Файлы пока не изменяются.
+            <p className={applyAllowed && !planStale ? "message success" : "message warning"}>
+              {activePlan?.status === "APPLIED"
+                ? "План сериалов уже применён."
+                : applyAllowed && !planStale
+                  ? "План сериалов готов к применению."
+                  : "Перед применением устраните конфликты, обновите устаревший план или выполните проверку."}
             </p>
           ) : null}
         </div>
@@ -113,8 +133,7 @@ export function PlanApplyPanel({
             type="button"
             className="btn-primary"
             disabled={busy || !applyAllowed || planStale}
-            onClick={tvPlan ? undefined : onApplyClick}
-            title={tvPlan ? "Применение сериалов пока отключено" : undefined}
+            onClick={onApplyClick}
           >
             Применить план
           </button>
@@ -130,9 +149,7 @@ export function PlanApplyPanel({
 
       {applyResult ? (
         <p className={applyResult.failed_operations > 0 ? "message error" : "message success"}>
-          Выполнено {applyResult.done_operations} из {applyResult.total_operations}. Статус:{" "}
-          {labelPlanStatus(applyResult.status)}
-          {applyResult.error_message ? ` · ${applyResult.error_message}` : ""}
+          {formatApplyResult(applyResult, summary, tvPlan)}
         </p>
       ) : null}
 

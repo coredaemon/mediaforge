@@ -21,10 +21,7 @@ from ..utils.path_safety import is_trusted_tmdb_url, validate_source_in_session,
 from ..utils.paths import normalize_path
 from .plan_validation_service import PlanValidationService
 from .planning_service import OperationPlanNotFoundError
-
-
-TV_APPLY_DISABLED_CODE = "tv_apply_disabled"
-TV_APPLY_DISABLED_MESSAGE = "Применение сериалов пока отключено в этой версии. Проверьте предварительный план, файлы не изменены."
+from .processed_media_service import ProcessedMediaService
 
 
 class PlanApplyError(ValueError):
@@ -44,6 +41,7 @@ class ApplyService:
         self.plan_operations = PlanOperationRepository(session)
         self.apply_runs = ApplyRunRepository(session)
         self.media_items = MediaItemRepository(session)
+        self.processed_media = ProcessedMediaService(session)
         self.validation = PlanValidationService(session)
         self._http_client = http_client
 
@@ -55,6 +53,8 @@ class ApplyService:
         if plan is None:
             raise OperationPlanNotFoundError(f"Operation plan {plan_id} was not found.")
         if plan.status != PlanStatus.READY:
+            if plan.status == PlanStatus.APPLIED:
+                raise PlanApplyError("Plan has already been applied")
             raise PlanApplyError(f"Plan status must be READY, got {plan.status}")
 
         validation_result = await self.validation.validate_plan(plan_id)
@@ -66,8 +66,6 @@ class ApplyService:
         operations = list(await self.plan_operations.list_by_plan(plan_id))
         if not operations:
             raise PlanApplyError("Plan has no operations")
-        if any((operation.payload_json or {}).get("tv_apply_disabled") for operation in operations):
-            raise PlanApplyError(TV_APPLY_DISABLED_MESSAGE, error_code=TV_APPLY_DISABLED_CODE)
 
         apply_run = await self.apply_runs.create(
             ApplyRun(
@@ -206,7 +204,14 @@ class ApplyService:
                 raise PlanApplyError(f"Target file already exists: {target}")
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source), str(target))
-            return {"from": str(source), "to": str(target)}
+            await self._record_tv_episode_move(operation, target)
+            return {
+                "operation_type": op_type.value,
+                "source_path": str(source),
+                "target_path": str(target),
+                "from": str(source),
+                "to": str(target),
+            }
 
         if op_type == OperationType.WRITE_TEXT_FILE:
             if not operation.target_path:
@@ -240,6 +245,40 @@ class ApplyService:
 
         raise PlanApplyError(f"Unsupported operation type: {op_type}")
 
+    async def _record_tv_episode_move(self, operation: PlanOperation, target: Path) -> None:
+        payload = operation.payload_json or {}
+        episode_id = payload.get("tv_episode_id")
+        if payload.get("media_type") != "tv" or not episode_id:
+            return
+
+        from ..repositories.tv_repository import TvRepository
+
+        show_id = payload.get("tv_show_id")
+        if not show_id:
+            return
+        tv_repo = TvRepository(self.session)
+        show = await tv_repo.get_show(int(show_id))
+        if show is None:
+            return
+        episode = next(
+            (episode for episode in await tv_repo.list_episodes(show.id) if episode.id == int(episode_id)),
+            None,
+        )
+        if episode is None or not episode.source_file_id:
+            return
+        from ..models.media_file import MediaFile
+
+        media_file = await self.session.get(MediaFile, episode.source_file_id)
+        if media_file is None:
+            return
+        await self.processed_media.record_from_tv_episode(
+            show,
+            episode,
+            media_file,
+            session_id=show.scan_session_id,
+            target_path=str(target),
+        )
+
     async def _build_text_content(self, operation: PlanOperation) -> str:
         payload = operation.payload_json or {}
         media_item_id = payload.get("media_item_id")
@@ -264,7 +303,10 @@ class ApplyService:
             episode_id = payload.get("tv_episode_id")
             if not episode_id:
                 raise PlanApplyError("Episode NFO payload missing tv_episode_id")
-            episode = next((episode for episode in show.episodes if episode.id == int(episode_id)), None)
+            episode = next(
+                (episode for episode in await tv_repo.list_episodes(show.id) if episode.id == int(episode_id)),
+                None,
+            )
             if episode is None:
                 raise PlanApplyError(f"TV episode {episode_id} not found for NFO generation")
             return build_episode_nfo(show, episode)

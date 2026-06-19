@@ -171,3 +171,22 @@ async def test_validate_conflict_if_target_dir_exists_as_file(db_session: AsyncS
 
     result = await PlanValidationService(db_session).validate_plan(plan_id)
     assert result.conflict_count == 1
+
+
+async def test_validate_conflict_if_tv_episode_nfo_payload_missing_ids(db_session: AsyncSession, tmp_path) -> None:
+    plan_id, _, _, target = await _setup_plan(db_session, tmp_path)
+    await PlanOperationRepository(db_session).create(
+        PlanOperation(
+            plan_id=plan_id,
+            operation_type=OperationType.WRITE_TEXT_FILE,
+            status=OperationStatus.PENDING,
+            target_path=str(target / "Show" / "Season 01" / "episode.nfo"),
+            payload_json={"media_type": "tv", "nfo_type": "episode", "tv_show_id": 1},
+        )
+    )
+    await db_session.commit()
+
+    result = await PlanValidationService(db_session).validate_plan(plan_id)
+    assert result.conflict_count == 1
+    assert result.operations[0].validation_status == ValidationStatus.CONFLICT
+    assert result.operations[0].validation_error == "TV episode NFO payload missing ids"

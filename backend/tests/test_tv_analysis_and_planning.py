@@ -1,9 +1,14 @@
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+from sqlalchemy import select
 
-from backend.app.models.enums import MediaFileKind, ReviewDecision
+from backend.app.models.apply_operation_log import ApplyOperationLog
+from backend.app.models.enums import MediaFileKind, OperationType, ReviewDecision
 from backend.app.models.media_file import MediaFile
+from backend.app.models.processed_media_record import ProcessedMediaRecord
 from backend.app.models.scan_session import ScanSession
 from backend.app.models.tv_episode import TvEpisode
 from backend.app.models.tv_season import TvSeason
@@ -20,6 +25,17 @@ from backend.app.services.tv_planning_service import TvPlanningService
 from backend.app.repositories.plan_operation_repository import PlanOperationRepository
 from backend.app.schemas.tv import TvReviewDecisionRequest
 from backend.tests.fakes import FakeTmdbClient
+
+
+def _mock_http_client(content: bytes = b"image-bytes") -> httpx.AsyncClient:
+    response = MagicMock()
+    response.status_code = 200
+    response.headers = {"content-type": "image/jpeg"}
+    response.content = content
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.get = AsyncMock(return_value=response)
+    client.aclose = AsyncMock()
+    return client
 
 
 @pytest.mark.asyncio
@@ -75,7 +91,7 @@ async def test_tv_only_folder_routes_to_tv_pipeline_without_movie_items(db_sessi
     assert {show.title for show in shows} == {"Show A", "Show B"}
     assert {payload.get("tv_show_title") for payload in tv_payloads} == {"Show A", "Show B"}
     assert all(payload.get("media_type") == "tv" for payload in tv_payloads)
-    assert all(payload.get("tv_apply_disabled") is True for payload in tv_payloads)
+    assert all("tv_apply_disabled" not in payload for payload in tv_payloads)
     assert len(tmdb.tv_calls) >= 2
     assert tmdb.movie_calls == []
 
@@ -155,14 +171,101 @@ async def test_tv_analysis_and_plan_use_direct_target_root(db_session, tmp_path:
     assert all("TV Shows" not in target for target in targets)
     assert any("Season 01" in target for target in targets)
     assert all(payload.get("media_type") == "tv" for payload in payloads)
-    assert all(payload.get("tv_apply_disabled") is True for payload in payloads)
+    assert all("tv_apply_disabled" not in payload for payload in payloads)
     assert {payload.get("tv_show_title") for payload in payloads} == {"Тестовый сериал"}
     assert any(payload.get("season_number") == 1 for payload in payloads)
     assert any(payload.get("episode_number") == 1 for payload in episode_payloads)
-    with pytest.raises(PlanApplyError) as exc_info:
-        await ApplyService(db_session).apply_plan(plan.id, confirm=True)
-    assert exc_info.value.error_code == "tv_apply_disabled"
-    assert "Применение сериалов пока отключено" in str(exc_info.value)
+    assert any(operation.operation_type == OperationType.MOVE_FILE for operation in operations)
+
+
+@pytest.mark.asyncio
+async def test_tv_apply_moves_episode_writes_metadata_downloads_assets_and_records_memory(db_session, tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    season_source = source / "Safe Show" / "Season 01"
+    season_source.mkdir(parents=True)
+    target.mkdir()
+    video = season_source / "Safe Show S01E01.mkv"
+    video.write_bytes(b"episode")
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.flush()
+    media_file = MediaFile(
+        scan_session_id=scan_session.id,
+        path=str(video.resolve()),
+        file_name=video.name,
+        extension=".mkv",
+        size_bytes=video.stat().st_size,
+        modified_at=None,
+        kind=MediaFileKind.VIDEO,
+        is_video=True,
+    )
+    db_session.add(media_file)
+    await db_session.flush()
+    show = TvShow(
+        scan_session_id=scan_session.id,
+        local_group_id="safe-show",
+        title="Safe Show",
+        year=2024,
+        tmdb_id=12345,
+        poster_path="/poster.jpg",
+        review_decision=ReviewDecision.APPROVED,
+        needs_review=False,
+    )
+    db_session.add(show)
+    await db_session.flush()
+    season = TvSeason(show_id=show.id, season_number=1, title="Season 01")
+    db_session.add(season)
+    await db_session.flush()
+    db_session.add(
+        TvEpisode(
+            show_id=show.id,
+            season_id=season.id,
+            source_file_id=media_file.id,
+            season_number=1,
+            episode_number=1,
+            title="Pilot",
+            tmdb_episode_id=777,
+            source_path=str(video.resolve()),
+            needs_review=False,
+        )
+    )
+    await db_session.commit()
+
+    plan = await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+    operations = await PlanOperationRepository(db_session).list_by_plan(plan.id)
+    payloads = [operation.payload_json or {} for operation in operations]
+    assert all(payload.get("media_type") == "tv" for payload in payloads)
+    assert all("tv_apply_disabled" not in payload for payload in payloads)
+
+    result = await ApplyService(db_session, http_client=_mock_http_client(b"poster")).apply_plan(plan.id, confirm=True)
+    assert result.failed_operations == 0
+
+    show_folder = target / "Safe Show (2024)"
+    target_video = show_folder / "Season 01" / "Safe Show - S01E01 - Pilot.mkv"
+    assert not video.exists()
+    assert target_video.exists()
+    assert "<tvshow>" in (show_folder / "tvshow.nfo").read_text(encoding="utf-8")
+    assert "<episodedetails>" in target_video.with_suffix(".nfo").read_text(encoding="utf-8")
+    assert (show_folder / "poster.jpg").read_bytes() == b"poster"
+
+    logs = (await db_session.execute(select(ApplyOperationLog))).scalars().all()
+    move_log = next(log for log in logs if log.operation_type == OperationType.MOVE_FILE)
+    assert move_log.rollback_data["operation_type"] == "MOVE_FILE"
+    assert move_log.rollback_data["source_path"] == str(video.resolve())
+    assert move_log.rollback_data["target_path"] == str(target_video)
+
+    records = (await db_session.execute(select(ProcessedMediaRecord))).scalars().all()
+    assert len(records) == 1
+    assert records[0].media_type == "tv"
+    assert records[0].tv_show_title == "Safe Show"
+    assert records[0].tv_season_number == 1
+    assert records[0].tv_episode_number == 1
+    assert records[0].tmdb_show_id == 12345
+    assert records[0].tmdb_episode_id == 777
+
+    with pytest.raises(PlanApplyError, match="already been applied"):
+        await ApplyService(db_session, http_client=_mock_http_client()).apply_plan(plan.id, confirm=True)
 
 
 @pytest.mark.asyncio
