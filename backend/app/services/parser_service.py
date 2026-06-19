@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +10,11 @@ from ..repositories.media_file_repository import MediaFileRepository
 from ..repositories.media_item_repository import MediaItemRepository
 from ..repositories.scan_session_repository import ScanSessionRepository
 from ..utils.media_name_parser import parse_media_filename
+from .media_classification_service import MediaClassificationService
 from .processed_media_service import ProcessedMediaService
 from .scan_session_service import ScanSessionNotFoundError
 from .sidecar_metadata_service import SidecarMetadataService
+from .tv_hints import parse_tv_file_hint
 
 
 class ParserService:
@@ -33,8 +36,13 @@ class ParserService:
         await self.session.flush()
 
         video_files = await self.media_files.list_by_kind(session_id, MediaFileKind.VIDEO)
+        classification = await MediaClassificationService(self.session).classify(session_id)
+        skip_tv_episode_files = classification.content_type in {"tv", "mixed"} and classification.confidence >= 0.65
         for media_file in video_files:
             if media_file.media_item_id is not None:
+                continue
+            tv_hint = parse_tv_file_hint(media_file.file_name, list(Path(media_file.path).parts[:-1]))
+            if skip_tv_episode_files and tv_hint.season_number is not None and tv_hint.episode_number is not None:
                 continue
 
             memory_record = await self.processed_media.find_reusable_record(media_file)

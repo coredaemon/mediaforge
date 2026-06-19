@@ -104,10 +104,7 @@ async def test_planning_service_creates_dry_run_operations_without_touching_file
         for operation in operations
         if operation.operation_type == OperationType.DOWNLOAD_FILE
     )
-    assert any(
-        Path(operation.target_path).as_posix().endswith("TV Shows/Hannibal/Season 01/Hannibal S01E01.mkv")
-        for operation in move_operations
-    )
+    assert not any("Hannibal" in str(operation.target_path) for operation in move_operations)
 
 
 async def test_planning_service_returns_existing_plan_without_force(db_session: AsyncSession, tmp_path) -> None:

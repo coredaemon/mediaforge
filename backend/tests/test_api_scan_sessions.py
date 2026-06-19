@@ -73,10 +73,9 @@ def test_scan_session_parse_api_flow(client: TestClient, tmp_path) -> None:
     items_response = client.get(f"/scan-sessions/{session_id}/items")
     assert items_response.status_code == 200
     items = items_response.json()
-    assert len(items) == 2
+    assert len(items) == 1
     assert {item["parsed_title"]: item["media_type"] for item in items} == {
         "The Matrix": "MOVIE",
-        "Hannibal": "TV_EPISODE",
     }
 
 
@@ -106,7 +105,7 @@ def test_scan_session_tmdb_match_api_flow(client: TestClient, tmp_path) -> None:
 
     match_response = client.post(f"/scan-sessions/{session_id}/match-tmdb")
     assert match_response.status_code == 200
-    assert match_response.json()["matched_count"] == 2
+    assert match_response.json()["matched_count"] == 1
 
     items_response = client.get(f"/scan-sessions/{session_id}/items")
     items = items_response.json()
@@ -119,6 +118,8 @@ def test_scan_session_tmdb_match_api_flow(client: TestClient, tmp_path) -> None:
     candidates = candidates_response.json()
     assert len(candidates) == 1
     assert candidates[0]["is_selected"]
+    assert fake_client.movie_calls
+    assert fake_client.tv_calls == []
     app.dependency_overrides.pop(get_tmdb_client, None)
 
 

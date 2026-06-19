@@ -30,7 +30,7 @@ class MediaItemRepository:
             select(MediaItem)
             .where(
                 MediaItem.scan_session_id == scan_session_id,
-                MediaItem.media_type.in_([MediaType.MOVIE, MediaType.TV_EPISODE]),
+                MediaItem.media_type == MediaType.MOVIE,
                 MediaItem.status != MediaItemStatus.IGNORED,
                 MediaItem.parsed_title.is_not(None),
             )

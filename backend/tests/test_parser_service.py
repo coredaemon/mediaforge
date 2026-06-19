@@ -29,10 +29,10 @@ async def test_parser_creates_items_for_video_files_only(db_session: AsyncSessio
     items_by_title = {item.parsed_title: item for item in items}
 
     assert parsed_session.status == ScanSessionStatus.PARSED
-    assert len(items) == 2
+    assert len(items) == 1
     assert items_by_title["The Matrix"].media_type == MediaType.MOVIE
-    assert items_by_title["Hannibal"].media_type == MediaType.TV_EPISODE
-    assert all(video.media_item_id is not None for video in videos)
+    assert "Hannibal" not in items_by_title
+    assert any(video.media_item_id is None and video.file_name == "Hannibal.S01E01.mkv" for video in videos)
     assert all(media_file.media_item_id is None for media_file in non_videos)
 
 

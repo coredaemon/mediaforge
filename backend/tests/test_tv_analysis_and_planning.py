@@ -4,6 +4,9 @@ import pytest
 
 from backend.app.models.enums import ReviewDecision
 from backend.app.models.scan_session import ScanSession
+from backend.app.repositories.media_item_repository import MediaItemRepository
+from backend.app.services.media_classification_service import MediaClassificationService
+from backend.app.services.parser_service import ParserService
 from backend.app.schemas.tmdb import TmdbDetailsResult, TmdbEpisodeResult, TmdbExternalIds, TmdbSearchResult, TmdbSeasonDetailsResult
 from backend.app.services.apply_service import ApplyService, PlanApplyError
 from backend.app.services.planning_service import NoMatchedItemsError
@@ -11,6 +14,54 @@ from backend.app.services.scanner_service import ScannerService
 from backend.app.services.tv_analysis_service import TvAnalysisService
 from backend.app.services.tv_planning_service import TvPlanningService
 from backend.tests.fakes import FakeTmdbClient
+
+
+@pytest.mark.asyncio
+async def test_tv_only_folder_routes_to_tv_pipeline_without_movie_items(db_session, tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    (source / "Show A" / "Season 01").mkdir(parents=True)
+    (source / "Show B" / "Season 01").mkdir(parents=True)
+    target.mkdir()
+    (source / "Show A" / "Season 01" / "Show A S01E01.mkv").write_text("video")
+    (source / "Show A" / "Season 01" / "Show A S01E02.mkv").write_text("video")
+    (source / "Show B" / "Season 01" / "Show B S01E01.mkv").write_text("video")
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.commit()
+    await db_session.refresh(scan_session)
+    await ScannerService(db_session).discover(scan_session.id)
+
+    classification = await MediaClassificationService(db_session).classify(scan_session.id)
+    await ParserService(db_session).parse_scan_session(scan_session.id)
+    items = await MediaItemRepository(db_session).list_by_scan_session(scan_session.id)
+
+    class RoutingTmdb(FakeTmdbClient):
+        async def search_tv(self, query: str, year: int | None = None, language: str = "ru-RU"):
+            self.tv_calls.append((query, year, language))
+            if "Show A" in query:
+                return [TmdbSearchResult(tmdb_id=101, media_type="tv", title="Show A", year=2024)]
+            if "Show B" in query:
+                return [TmdbSearchResult(tmdb_id=202, media_type="tv", title="Show B", year=2024)]
+            return []
+
+    tmdb = RoutingTmdb(
+        tv_details={
+            101: TmdbDetailsResult(tmdb_id=101, media_type="tv", title="Show A", year=2024),
+            202: TmdbDetailsResult(tmdb_id=202, media_type="tv", title="Show B", year=2024),
+        }
+    )
+    result = await TvAnalysisService(db_session, tmdb_client=tmdb).analyze_scan_session(scan_session.id)
+    shows = await TvAnalysisService(db_session, tmdb_client=tmdb).list_shows(scan_session.id)
+
+    assert classification.content_type == "tv"
+    assert classification.tv_like_files == 3
+    assert len(items) == 0
+    assert result.show_count == 2
+    assert result.episode_count == 3
+    assert {show.title for show in shows} == {"Show A", "Show B"}
+    assert len(tmdb.tv_calls) >= 2
+    assert tmdb.movie_calls == []
 
 
 @pytest.mark.asyncio

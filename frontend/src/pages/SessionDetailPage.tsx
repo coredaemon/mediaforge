@@ -394,21 +394,29 @@ export function SessionDetailPage() {
     void loadAll();
   }, [loadAll]);
 
+  const isTvOnlySession = classification?.content_type === "tv";
+  const movieFlowItems = isTvOnlySession ? [] : items;
+  const tvSeasonCount = tvShows.reduce((total, show) => total + show.seasons.length, 0);
+  const tvEpisodeCount = tvShows.reduce(
+    (total, show) => total + show.seasons.reduce((seasonTotal, season) => seasonTotal + season.episodes.length, 0),
+    0,
+  );
+
   const summary = useMemo(() => {
     const video = files.filter((f) => f.is_video).length;
     const subtitles = files.filter((f) => f.is_subtitle).length;
-    const matched = items.filter((item) => item.status === "MATCHED").length;
-    const review = items.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN").length;
-    const reused = items.filter((item) => item.reused_from_memory).length;
-    const fresh = items.filter((item) => !item.reused_from_memory).length;
-    const ignored = items.filter((item) => item.review_decision === "ignored").length;
-    const deferred = items.filter((item) => item.review_decision === "deferred").length;
-    const planSummary = buildPlanSummary(operations, items, validationResult?.conflict_count ?? 0);
+    const matched = movieFlowItems.filter((item) => item.status === "MATCHED").length;
+    const review = movieFlowItems.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN").length;
+    const reused = movieFlowItems.filter((item) => item.reused_from_memory).length;
+    const fresh = movieFlowItems.filter((item) => !item.reused_from_memory).length;
+    const ignored = movieFlowItems.filter((item) => item.review_decision === "ignored").length;
+    const deferred = movieFlowItems.filter((item) => item.review_decision === "deferred").length;
+    const planSummary = buildPlanSummary(operations, movieFlowItems, validationResult?.conflict_count ?? 0);
     return {
       totalFiles: files.length,
       video,
       subtitles,
-      items: items.length,
+      items: movieFlowItems.length,
       matched,
       review,
       reused,
@@ -418,21 +426,21 @@ export function SessionDetailPage() {
       operations: operations.length,
       conflicts: planSummary.conflicts,
     };
-  }, [files, items, operations, validationResult]);
+  }, [files, movieFlowItems, operations, validationResult]);
 
   const planExcluded = useMemo(() => {
-    const ignored = items.filter((item) => item.review_decision === "ignored").length;
-    const deferred = items.filter((item) => item.review_decision === "deferred").length;
-    const plannable = items.filter(
+    const ignored = movieFlowItems.filter((item) => item.review_decision === "ignored").length;
+    const deferred = movieFlowItems.filter((item) => item.review_decision === "deferred").length;
+    const plannable = movieFlowItems.filter(
       (item) => item.status === "MATCHED" && !["ignored", "deferred"].includes(item.review_decision),
     ).length;
     return { ignored, deferred, plannable };
-  }, [items]);
+  }, [movieFlowItems]);
 
-  const matchedItems = items.filter((item) => item.status === "MATCHED");
-  const reviewItems = items.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN");
-  const unmatchedItems = items.filter((item) => item.status === "UNMATCHED");
-  const otherItems = items.filter(
+  const matchedItems = movieFlowItems.filter((item) => item.status === "MATCHED");
+  const reviewItems = movieFlowItems.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN");
+  const unmatchedItems = movieFlowItems.filter((item) => item.status === "UNMATCHED");
+  const otherItems = movieFlowItems.filter(
     (item) => !matchedItems.includes(item) && !reviewItems.includes(item) && !unmatchedItems.includes(item),
   );
 
@@ -470,13 +478,14 @@ export function SessionDetailPage() {
     };
     setStepStatus(nextStatus);
 
-    const runStep = async (key: string, action: () => Promise<unknown>) => {
+    const runStep = async <T,>(key: string, action: () => Promise<T>) => {
       nextStatus[key] = "running";
       setStepStatus({ ...nextStatus });
-      await action();
+      const result = await action();
       nextStatus[key] = "done";
       setStepStatus({ ...nextStatus });
       await loadAll();
+      return result;
     };
 
     try {
@@ -488,26 +497,47 @@ export function SessionDetailPage() {
         }
       });
       await runStep("discover", () => discoverSession(numId));
-      await runStep("classification", () => classifySession(numId));
-      await runStep("parse", () => parseSession(numId));
-      await runStep("match", () => matchTmdbSession(numId));
-      await runStep("local-ai", () => normalizeLocalAi(numId));
-      await runStep("gemini", async () => {
-        await resolveWithGemini(numId);
-        await matchTmdbSession(numId, true);
-      });
-      let tvShowCount = 0;
-      await runStep("tv", async () => {
-        const result = await analyzeTvSession(numId, true);
-        tvShowCount = result.show_count;
-      });
-      if (tvShowCount > 0) {
-        await runStep("tv-plan", () => createTvPlan(numId, true));
+      const classificationResult = await runStep("classification", () => classifySession(numId));
+      const contentType = classificationResult.content_type;
+      if (classificationResult.needs_user_decision) {
+        throw new ApiError(400, "Тип содержимого не определён уверенно. Выберите режим обработки вручную.");
+      }
+
+      if (contentType === "movies" || contentType === "mixed") {
+        await runStep("parse", () => parseSession(numId));
+        await runStep("local-ai", () => normalizeLocalAi(numId));
+        await runStep("match", () => matchTmdbSession(numId));
+        await runStep("gemini", async () => {
+          await resolveWithGemini(numId);
+          await matchTmdbSession(numId, true);
+        });
+        await runStep("plan", () => createPlan(numId, true));
       } else {
+        nextStatus.parse = "done";
+        nextStatus["local-ai"] = "done";
+        nextStatus.match = "done";
+        nextStatus.gemini = "done";
+        nextStatus.plan = "done";
+        setStepStatus({ ...nextStatus });
+      }
+
+      if (contentType === "tv" || contentType === "mixed") {
+        let tvShowCount = 0;
+        await runStep("tv", async () => {
+          const result = await analyzeTvSession(numId, true);
+          tvShowCount = result.show_count;
+        });
+        if (tvShowCount > 0) {
+          await runStep("tv-plan", () => createTvPlan(numId, true));
+        } else {
+          nextStatus["tv-plan"] = "done";
+          setStepStatus({ ...nextStatus });
+        }
+      } else {
+        nextStatus.tv = "done";
         nextStatus["tv-plan"] = "done";
         setStepStatus({ ...nextStatus });
       }
-      await runStep("plan", () => createPlan(numId, true));
       setAnalysisCollapsed(true);
       setInfo("Анализ завершён. Проверьте найденные объекты и безопасный план.");
     } catch (err) {
@@ -798,6 +828,11 @@ export function SessionDetailPage() {
             <span className="muted">уверенность {Math.round(classification.confidence * 100)}%</span>
           </div>
           <p className="muted">{classification.reason}</p>
+          {classification.content_type === "tv" || classification.content_type === "mixed" ? (
+            <p className="muted">
+              Сериалов: {tvShows.length} · Сезонов: {tvSeasonCount} · Эпизодов: {tvEpisodeCount}
+            </p>
+          ) : null}
           <p className="muted">
             Видео: {classification.video_files} · Вложенных папок: {classification.nested_folder_count} · TV-признаков: {classification.tv_like_files} · Фильм-признаков: {classification.movie_like_files}
           </p>
@@ -827,6 +862,9 @@ export function SessionDetailPage() {
         </section>
       ) : null}
 
+      {isTvOnlySession ? (
+        <p className="muted compact-section-row">Фильмы: не обнаружены</p>
+      ) : (
       <section className="panel review-main-panel">
         <div className="section-heading">
           <h3>Проверка найденных фильмов</h3>
@@ -868,6 +906,7 @@ export function SessionDetailPage() {
           }}
         />
       </section>
+      )}
 
       <TvReviewSection
         shows={tvShows}

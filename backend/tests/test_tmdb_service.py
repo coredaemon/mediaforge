@@ -43,7 +43,7 @@ async def test_tmdb_matching_auto_selects_high_confidence_movie(db_session: Asyn
     assert candidates[0].is_selected
 
 
-async def test_tmdb_matching_auto_selects_tv_episode_at_show_level(db_session: AsyncSession, tmp_path) -> None:
+async def test_tmdb_matching_skips_tv_episode_items_for_tv_pipeline(db_session: AsyncSession, tmp_path) -> None:
     scan_session = await ScanSessionService(db_session).create_scan_session(str(tmp_path / "in"), str(tmp_path / "out"))
     item = await MediaItemRepository(db_session).create(
         MediaItem(
@@ -64,11 +64,13 @@ async def test_tmdb_matching_auto_selects_tv_episode_at_show_level(db_session: A
     result = await TMDBService(db_session, client=fake_client).match_scan_session(scan_session.id)
     refreshed = await MediaItemRepository(db_session).get_by_id(item.id)
 
-    assert result.matched_count == 1
+    assert result.matched_count == 0
+    assert result.skipped_count == 0
     assert refreshed is not None
-    assert refreshed.status == MediaItemStatus.MATCHED
-    assert refreshed.tmdb_id == 40008
-    assert refreshed.tmdb_media_type == "tv"
+    assert refreshed.status == MediaItemStatus.DISCOVERED
+    assert refreshed.tmdb_id is None
+    assert fake_client.movie_calls == []
+    assert fake_client.tv_calls == []
 
 
 async def test_tmdb_matching_marks_item_unmatched_when_no_candidates(db_session: AsyncSession, tmp_path) -> None:
