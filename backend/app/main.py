@@ -1,9 +1,14 @@
 import logging
+import os
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api.routes.filesystem import router as filesystem_router
 from .api.routes.health import router as health_router
@@ -21,6 +26,55 @@ CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
+
+FRONTEND_ROUTE_PREFIXES = (
+    "/sessions",
+    "/setup",
+    "/status",
+    "/about",
+)
+FRONTEND_ROUTE_PATHS = {"/settings"}
+
+
+def _candidate_static_dirs() -> list[Path]:
+    configured = os.getenv("MEDIAFORGE_STATIC_DIR")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(configured))
+
+    project_root = Path(__file__).resolve().parents[2]
+    base_dir = Path(getattr(sys, "_MEIPASS", project_root))
+    candidates.extend(
+        [
+            base_dir / "frontend" / "dist",
+            base_dir / "app" / "static",
+            project_root / "frontend" / "dist",
+            Path(__file__).resolve().parent / "static",
+        ]
+    )
+    return candidates
+
+
+def get_frontend_static_dir() -> Path | None:
+    for candidate in _candidate_static_dirs():
+        index = candidate / "index.html"
+        if index.is_file():
+            return candidate
+    return None
+
+
+def _accepts_html(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept or "application/xhtml+xml" in accept
+
+
+def _is_frontend_route(path: str) -> bool:
+    normalized = path.rstrip("/") or "/"
+    return normalized == "/" or normalized in FRONTEND_ROUTE_PATHS or normalized.startswith(FRONTEND_ROUTE_PREFIXES)
+
+
+def _index_response(static_dir: Path) -> FileResponse:
+    return FileResponse(static_dir / "index.html")
 
 
 @asynccontextmanager
@@ -58,6 +112,25 @@ def create_app() -> FastAPI:
     app.include_router(scan_sessions_router)
     app.include_router(settings_router)
     app.include_router(tv_router)
+
+    static_dir = get_frontend_static_dir()
+    if static_dir is not None:
+        assets_dir = static_dir / "assets"
+        if assets_dir.is_dir():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+        @app.middleware("http")
+        async def frontend_navigation_middleware(request: Request, call_next):
+            if request.method == "GET" and _accepts_html(request) and _is_frontend_route(request.url.path):
+                return _index_response(static_dir)
+            return await call_next(request)
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def frontend_spa_fallback(full_path: str, request: Request):
+            path = "/" + full_path
+            if request.method == "GET" and _is_frontend_route(path):
+                return _index_response(static_dir)
+            raise HTTPException(status_code=404, detail="Not Found")
     return app
 
 

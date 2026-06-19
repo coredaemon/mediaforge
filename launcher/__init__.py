@@ -1,0 +1,2 @@
+"""MediaForge Windows launcher package."""
+

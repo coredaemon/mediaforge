@@ -26,7 +26,50 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-### Запуск
+### Запуск через MediaForge Launcher.exe
+
+Launcher — это первый простой Windows-запуск без ручного PowerShell. Он использует production-style режим:
+
+- frontend сначала собирается в `frontend/dist`;
+- backend FastAPI отдает этот frontend как static files;
+- launcher запускает только backend и открывает браузер на `http://127.0.0.1:8765/`.
+
+Сборка launcher:
+
+```powershell
+.\scripts\build-launcher.ps1
+```
+
+Готовый exe:
+
+```text
+dist/MediaForge Launcher/MediaForge Launcher.exe
+```
+
+Launcher ищет корень проекта автоматически. Если нужно указать его явно:
+
+```powershell
+$env:MEDIAFORGE_PROJECT_ROOT="D:\Проекты\MediaForge"
+```
+
+Лог launcher:
+
+```text
+%LOCALAPPDATA%\MediaForge\logs\launcher.log
+```
+
+При запуске launcher:
+
+1. выбирает порт `127.0.0.1:8765` или свободный порт, если 8765 занят;
+2. если MediaForge уже отвечает на этом порту, не запускает второй backend;
+3. стартует `python -m uvicorn backend.app.main:app --host 127.0.0.1 --port <port>`;
+4. ждет `GET /health`;
+5. открывает UI в браузере;
+6. по кнопке «Остановить» завершает backend, который сам запустил.
+
+Это пока не полноценный installer: exe рассчитан на подготовленную папку проекта с установленными Python-зависимостями.
+
+### Dev-запуск
 
 ```powershell
 .\scripts\start-dev.ps1
@@ -161,7 +204,7 @@ The TV dry-run plan writes operations directly under the selected target root:
     {Show Title} - S01E01 - {Episode Title}.nfo
 ```
 
-No extra `TV Shows` folder is added by the new TV planner. TV apply is intentionally disabled in this release; generated operations are for inspection only. Movie apply remains enabled and unchanged.
+No extra `TV Shows` folder is added by the new TV planner. TV apply uses the same safe apply layer as movie apply: validation, no-overwrite checks, operation logs, and explicit user confirmation.
 
 ## OpenRouter-first AI routing
 
