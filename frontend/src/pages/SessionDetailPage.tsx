@@ -23,6 +23,8 @@ import {
   listPlans,
   listTmdbCandidates,
   listTvShows,
+  manualTvTmdbLookup,
+  manualTvTmdbSearch,
   manualTmdbLookup,
   manualTmdbSearch,
   matchTmdbSession,
@@ -64,11 +66,13 @@ import type {
   RecognitionPreflightResult,
   ScanSession,
   TmdbMatchCandidate,
+  TmdbSearchResult,
   TvShow,
 } from "../types";
 import { defaultSelectedIds, isBulkSelectable } from "../utils/bulkSelection";
 import { buildPlanSummary } from "../utils/planSummary";
 import { loadSection } from "../utils/sectionLoad";
+import { candidatePosterUrl } from "../utils/tmdb";
 
 type StepStatus = "pending" | "running" | "done" | "error";
 
@@ -405,6 +409,25 @@ export function SessionDetailPage() {
   const summary = useMemo(() => {
     const video = files.filter((f) => f.is_video).length;
     const subtitles = files.filter((f) => f.is_subtitle).length;
+    if (isTvOnlySession) {
+      const ignored = tvShows.filter((show) => show.review_decision === "ignored").length;
+      const deferred = tvShows.filter((show) => show.review_decision === "deferred").length;
+      const review = tvShows.filter((show) => tvShowReviewState(show) === "needs_review").length;
+      return {
+        totalFiles: files.length,
+        video,
+        subtitles,
+        items: tvShows.length,
+        matched: tvShows.length,
+        review,
+        reused: 0,
+        fresh: tvShows.length,
+        ignored,
+        deferred,
+        operations: operations.length,
+        conflicts: buildPlanSummary(operations, movieFlowItems, validationResult?.conflict_count ?? 0).conflicts,
+      };
+    }
     const matched = movieFlowItems.filter((item) => item.status === "MATCHED").length;
     const review = movieFlowItems.filter((item) => item.status === "NEEDS_REVIEW" || item.media_type === "UNKNOWN").length;
     const reused = movieFlowItems.filter((item) => item.reused_from_memory).length;
@@ -426,7 +449,7 @@ export function SessionDetailPage() {
       operations: operations.length,
       conflicts: planSummary.conflicts,
     };
-  }, [files, movieFlowItems, operations, validationResult]);
+  }, [files, isTvOnlySession, movieFlowItems, operations, validationResult, tvShows]);
 
   const planExcluded = useMemo(() => {
     const ignored = movieFlowItems.filter((item) => item.review_decision === "ignored").length;
@@ -605,8 +628,8 @@ export function SessionDetailPage() {
     const planTime = new Date(activePlan.updated_at).getTime();
     return items.some(
       (item) => item.reviewed_at && new Date(item.reviewed_at).getTime() > planTime,
-    );
-  }, [activePlan, items]);
+    ) || tvShows.some((show) => new Date(show.updated_at).getTime() > planTime);
+  }, [activePlan, items, tvShows]);
 
   async function handleBulkApproveAll() {
     await runAction("bulk-approve-all", async () => {
@@ -911,8 +934,20 @@ export function SessionDetailPage() {
       <TvReviewSection
         shows={tvShows}
         busy={busy}
+        planStale={planStale}
         onDecision={async (showId, decision) => {
-          await applyTvReviewDecision(showId, { decision });
+          const messages: Record<string, string> = {
+            approved: "Сериал включён в план. Пересоберите план сериалов.",
+            ignored: "Сериал исключён из плана. Пересоберите план сериалов, чтобы обновить операции.",
+            deferred: "Сериал отложен и не попадёт в текущий план.",
+            manual_override: "Совпадение изменено. Пересоберите план сериалов.",
+          };
+          await runAction(`tv-${decision}-${showId}`, async () => {
+            await applyTvReviewDecision(showId, { decision });
+          }, messages[decision] ?? "Решение по сериалу сохранено.");
+        }}
+        onShowUpdated={async (message) => {
+          setInfo(message);
           await loadAll();
         }}
         onRebuildPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "План сериалов пересобран.")}
@@ -1053,19 +1088,27 @@ function fileNameFromPath(path?: string | null): string {
 function TvReviewSection({
   shows,
   busy,
+  planStale,
   onDecision,
+  onShowUpdated,
   onRebuildPlan,
 }: {
   shows: TvShow[];
   busy: boolean;
+  planStale: boolean;
   onDecision: (showId: number, decision: string) => Promise<void>;
+  onShowUpdated: (message: string) => Promise<void>;
   onRebuildPlan: () => void;
 }) {
+  const [manualShowId, setManualShowId] = useState<number | null>(null);
   const episodeCount = shows.reduce(
     (total, show) => total + show.seasons.reduce((seasonTotal, season) => seasonTotal + season.episodes.length, 0),
     0,
   );
   const needsReview = shows.filter((show) => show.needs_review || show.seasons.some((season) => season.episodes.some((episode) => episode.needs_review))).length;
+  const includedCount = shows.filter((show) => tvShowReviewState(show) === "included" || tvShowReviewState(show) === "manual_override").length;
+  const ignoredCount = shows.filter((show) => tvShowReviewState(show) === "ignored").length;
+  const deferredCount = shows.filter((show) => tvShowReviewState(show) === "deferred").length;
 
   if (shows.length === 0) {
     return <p className="muted compact-section-row">Сериалы: не обнаружены</p>;
@@ -1076,60 +1119,90 @@ function TvReviewSection({
       <div className="section-heading">
         <h3>Проверка сериалов</h3>
         <span className="muted">
-          Сериалов: {shows.length} · Эпизодов: {episodeCount} · Требуют проверки: {needsReview}
+          В план: {includedCount} · Эпизодов: {episodeCount} · Требуют проверки: {needsReview} · исключено: {ignoredCount} · отложено: {deferredCount}
         </span>
       </div>
+      {planStale ? (
+        <p className="message warning">Решения по сериалам изменились. Пересоберите план сериалов.</p>
+      ) : null}
       <div className="review-item-list">
-        {shows.map((show) => (
-          <article className="compact-media-row tv-show-row" key={show.id}>
-            {show.poster_url ? <img className="poster-thumb" src={show.poster_url} alt="" /> : <div className="poster-thumb placeholder" />}
-            <div className="compact-media-main">
-              <div className="compact-media-title-row">
-                <strong>{show.title}{show.year ? ` (${show.year})` : ""}</strong>
-                <span className={`status-badge ${show.needs_review ? "warning" : "success"}`}>
-                  {show.needs_review ? "Требует проверки" : "Готово"}
-                </span>
+        {shows.map((show) => {
+          const state = tvShowReviewState(show);
+          const status = tvShowStatusParts(show);
+          return (
+            <article className="compact-media-row tv-show-row" key={show.id}>
+              {show.poster_url ? <img className="poster-thumb" src={show.poster_url} alt="" /> : <div className="poster-thumb placeholder" />}
+              <div className="compact-media-main">
+                <div className="compact-media-title-row">
+                  <strong>{state === "needs_review" ? "Возможное совпадение: " : ""}{show.title}{show.year ? ` (${show.year})` : ""}</strong>
+                  <span className="tv-status-badges">
+                    {status.map((part) => (
+                      <span key={part.label} className={`status-badge ${part.tone}`}>{part.label}</span>
+                    ))}
+                  </span>
+                </div>
+                <p className="muted">
+                  Сериал · {show.tmdb_id ? `TMDB ${show.tmdb_id}` : "TMDB не выбран"}
+                  {show.tvdb_id ? ` · TVDB ${show.tvdb_id}` : ""}
+                  {show.imdb_id ? ` · IMDb ${show.imdb_id}` : ""}
+                  {show.match_source ? ` · ${show.match_source}` : ""}
+                </p>
+                <p className="muted">
+                  Сезонов: {show.seasons.length} · Эпизодов:{" "}
+                  {show.seasons.reduce((total, season) => total + season.episodes.length, 0)}
+                </p>
+                {show.overview ? <p className="compact-overview">{show.overview}</p> : null}
+                {state === "needs_review" && show.ai_reasoning_summary ? (
+                  <p className="message warning">Причина: {show.ai_reasoning_summary}</p>
+                ) : null}
+                {show.warnings?.length ? <p className="message warning">{show.warnings.join("; ")}</p> : null}
+                <TvShowActions
+                  show={show}
+                  state={state}
+                  busy={busy}
+                  manualOpen={manualShowId === show.id}
+                  onToggleManual={() => setManualShowId((current) => (current === show.id ? null : show.id))}
+                  onDecision={onDecision}
+                />
+                {manualShowId === show.id ? (
+                  <TvManualMatchPanel
+                    show={show}
+                    busy={busy}
+                    onUpdated={async () => {
+                      setManualShowId(null);
+                      await onShowUpdated("Совпадение изменено. Пересоберите план сериалов.");
+                    }}
+                  />
+                ) : null}
+                <div className="tv-season-list">
+                  {show.seasons.map((season, seasonIndex) => (
+                    <details key={season.id} open={show.seasons.length <= 2 || seasonIndex === 0} className="tv-season-details">
+                      <summary>
+                        Сезон {season.season_number} — {season.episodes.length} серий
+                      </summary>
+                      <div className="tv-episode-list">
+                        {season.episodes.map((episode) => (
+                          <div className="tv-episode-row" key={episode.id}>
+                            <span>S{String(episode.season_number).padStart(2, "0")}E{String(episode.episode_number).padStart(2, "0")}</span>
+                            <span className="path-text" title={episode.source_path ?? undefined}>{fileNameFromPath(episode.source_path)}</span>
+                            <span>{episode.title ?? "Название будет уточнено"}</span>
+                            {episode.issue || episode.warning ? <span className="status-badge warning">{episode.issue ?? episode.warning}</span> : null}
+                            {episode.source_path ? (
+                              <details className="tv-episode-path">
+                                <summary>Путь</summary>
+                                <code>{episode.source_path}</code>
+                              </details>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
+                </div>
               </div>
-              <p className="muted">
-                Сериал · {show.tmdb_id ? "найдено в TMDB" : "TMDB не выбран"}
-                {show.tvdb_id ? ` · TVDB ${show.tvdb_id}` : ""}
-                {show.imdb_id ? ` · IMDb ${show.imdb_id}` : ""}
-              </p>
-              {show.overview ? <p className="compact-overview">{show.overview}</p> : null}
-              {show.warnings?.length ? <p className="message warning">{show.warnings.join("; ")}</p> : null}
-              <div className="manual-review-actions">
-                <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "approved")}>Одобрить сериал</button>
-                <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "ignored")}>Не добавлять</button>
-                <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "deferred")}>Отложить</button>
-              </div>
-              <div className="tv-season-list">
-                {show.seasons.map((season, seasonIndex) => (
-                  <details key={season.id} open={show.seasons.length <= 2 || seasonIndex === 0} className="tv-season-details">
-                    <summary>
-                      Сезон {season.season_number} — {season.episodes.length} серий
-                    </summary>
-                    <div className="tv-episode-list">
-                      {season.episodes.map((episode) => (
-                        <div className="tv-episode-row" key={episode.id}>
-                          <span>S{String(episode.season_number).padStart(2, "0")}E{String(episode.episode_number).padStart(2, "0")}</span>
-                          <span className="path-text" title={episode.source_path ?? undefined}>{fileNameFromPath(episode.source_path)}</span>
-                          <span>{episode.title ?? "Название будет уточнено"}</span>
-                          {episode.issue || episode.warning ? <span className="status-badge warning">{episode.issue ?? episode.warning}</span> : null}
-                          {episode.source_path ? (
-                            <details className="tv-episode-path">
-                              <summary>Путь</summary>
-                              <code>{episode.source_path}</code>
-                            </details>
-                          ) : null}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                ))}
-              </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
       <div className="pipeline-actions">
         <button type="button" disabled={busy || needsReview > 0} onClick={onRebuildPlan}>
@@ -1137,6 +1210,191 @@ function TvReviewSection({
         </button>
       </div>
     </section>
+  );
+}
+
+type TvReviewState = "included" | "needs_review" | "ignored" | "deferred" | "manual_override";
+
+function tvShowReviewState(show: TvShow): TvReviewState {
+  if (show.review_decision === "ignored") return "ignored";
+  if (show.review_decision === "deferred") return "deferred";
+  if (show.review_decision === "manual_override") return "manual_override";
+  if (show.needs_review || show.seasons.some((season) => season.episodes.some((episode) => episode.needs_review))) return "needs_review";
+  return "included";
+}
+
+function tvShowStatusParts(show: TvShow): { label: string; tone: BadgeTone }[] {
+  const state = tvShowReviewState(show);
+  if (state === "manual_override") return [{ label: "Выбрано вручную", tone: "info" }, { label: "Включён в план", tone: "success" }];
+  if (state === "included") return [{ label: "Включён в план", tone: "success" }];
+  if (state === "needs_review") return [{ label: "Требует проверки", tone: "warning" }];
+  if (state === "ignored") return [{ label: "Исключён из плана", tone: "neutral" }];
+  return [{ label: "Отложен", tone: "warning" }];
+}
+
+function TvShowActions({
+  show,
+  state,
+  busy,
+  manualOpen,
+  onToggleManual,
+  onDecision,
+}: {
+  show: TvShow;
+  state: TvReviewState;
+  busy: boolean;
+  manualOpen: boolean;
+  onToggleManual: () => void;
+  onDecision: (showId: number, decision: string) => Promise<void>;
+}) {
+  if (state === "needs_review") {
+    return (
+      <div className="manual-review-actions">
+        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "approved")}>Подтвердить</button>
+        <button type="button" disabled={busy} onClick={onToggleManual}>{manualOpen ? "Скрыть замену" : "Изменить совпадение"}</button>
+        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "ignored")}>Не добавлять</button>
+        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "deferred")}>Отложить</button>
+      </div>
+    );
+  }
+  if (state === "ignored" || state === "deferred") {
+    return (
+      <div className="manual-review-actions">
+        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "approved")}>Вернуть в план</button>
+        <button type="button" disabled={busy} onClick={onToggleManual}>{manualOpen ? "Скрыть замену" : "Изменить совпадение"}</button>
+      </div>
+    );
+  }
+  return (
+    <div className="manual-review-actions">
+      <button type="button" disabled={busy} onClick={onToggleManual}>{manualOpen ? "Скрыть замену" : "Изменить совпадение"}</button>
+      <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "ignored")}>Исключить из плана</button>
+      <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "deferred")}>Отложить</button>
+    </div>
+  );
+}
+
+function TvManualMatchPanel({
+  show,
+  busy,
+  onUpdated,
+}: {
+  show: TvShow;
+  busy: boolean;
+  onUpdated: () => Promise<void>;
+}) {
+  const [query, setQuery] = useState(show.title);
+  const [year, setYear] = useState(String(show.year ?? ""));
+  const [tmdbId, setTmdbId] = useState(String(show.tmdb_id ?? ""));
+  const [imdbId, setImdbId] = useState(show.imdb_id ?? "");
+  const [tvdbId, setTvdbId] = useState(String(show.tvdb_id ?? ""));
+  const [candidates, setCandidates] = useState<TmdbSearchResult[]>([]);
+  const [localBusy, setLocalBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const disabled = busy || localBusy;
+
+  async function runManualAction(action: () => Promise<void>) {
+    setLocalBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await action();
+    } catch (err) {
+      setError(err instanceof ApiError ? formatTmdbError(err.message) : "Операция не удалась.");
+    } finally {
+      setLocalBusy(false);
+    }
+  }
+
+  async function selectByIds(payload: { tmdb_id?: number | null; imdb_id?: string | null; tvdb_id?: number | null }) {
+    await manualTvTmdbLookup(show.id, { ...payload, select: true });
+    await onUpdated();
+  }
+
+  return (
+    <div className="manual-review-panel tv-manual-match-panel">
+      <h4>Изменить совпадение сериала</h4>
+      <div className="manual-review-grid">
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название" />
+        <input value={year} onChange={(event) => setYear(event.target.value)} placeholder="Год" inputMode="numeric" />
+      </div>
+      <div className="manual-review-actions">
+        <button
+          type="button"
+          disabled={disabled || !query.trim()}
+          onClick={() => void runManualAction(async () => {
+            const results = await manualTvTmdbSearch(show.id, {
+              query: query.trim(),
+              year: year.trim() ? Number(year) : null,
+            });
+            setCandidates(results);
+            setMessage(results.length > 0 ? `Найдено кандидатов: ${results.length}` : "Кандидаты не найдены.");
+          })}
+        >
+          Найти
+        </button>
+      </div>
+      <h4>Загрузить по ID</h4>
+      <p className="muted manual-review-hint">
+        TMDB ID загружает сериал напрямую. IMDb и TVDB ищутся через TMDB Find.
+      </p>
+      <div className="manual-review-grid">
+        <input value={tmdbId} onChange={(event) => setTmdbId(event.target.value)} placeholder="TMDB ID" inputMode="numeric" />
+        <input value={imdbId} onChange={(event) => setImdbId(event.target.value)} placeholder="IMDb ID" />
+        <input value={tvdbId} onChange={(event) => setTvdbId(event.target.value)} placeholder="TVDB ID" inputMode="numeric" />
+      </div>
+      <div className="manual-review-actions">
+        <button
+          type="button"
+          disabled={disabled || (!tmdbId.trim() && !imdbId.trim() && !tvdbId.trim())}
+          onClick={() => void runManualAction(async () => {
+            const validation = validateIdLookupInput(tmdbId, imdbId, tvdbId);
+            if (!validation.valid) {
+              setError(validation.error ?? "Некорректный ID");
+              return;
+            }
+            await selectByIds({
+              tmdb_id: tmdbId.trim() ? Number(tmdbId) : null,
+              imdb_id: imdbId.trim() || null,
+              tvdb_id: tvdbId.trim() ? Number(tvdbId) : null,
+            });
+          })}
+        >
+          Загрузить
+        </button>
+      </div>
+      {message ? <p className="message success">{message}</p> : null}
+      {error ? <p className="message error">{error}</p> : null}
+      {candidates.length > 0 ? (
+        <div className="candidate-list tv-candidate-list">
+          {candidates.map((candidate) => {
+            const poster = candidatePosterUrl(candidate);
+            return (
+              <div className="candidate-card visual-candidate-card" key={`${candidate.media_type}-${candidate.tmdb_id}`}>
+                {poster ? <img className="candidate-poster" src={poster} alt={candidate.title} loading="lazy" /> : <div className="poster-placeholder compact-poster-placeholder">Нет постера</div>}
+                <div className="candidate-content">
+                  <strong>{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</strong>
+                  <p className="muted">
+                    TMDB {candidate.tmdb_id} · {candidate.original_title ?? "оригинальное название не указано"}
+                  </p>
+                  <p>{candidate.overview ?? "Описание отсутствует."}</p>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={disabled}
+                    onClick={() => void runManualAction(() => selectByIds({ tmdb_id: candidate.tmdb_id }))}
+                  >
+                    Выбрать этот сериал
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

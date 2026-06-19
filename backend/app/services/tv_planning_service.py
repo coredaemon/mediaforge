@@ -53,7 +53,7 @@ class TvPlanningService:
             if show.review_decision not in {ReviewDecision.IGNORED, ReviewDecision.DEFERRED}
         ]
         if not shows:
-            raise NoMatchedItemsError(f"Scan session {session_id} has no TV shows to plan.")
+            raise NoMatchedItemsError("Нет сериалов для добавления в план.")
 
         plan = await self.operation_plans.create(OperationPlan(scan_session_id=session_id, status=PlanStatus.DRAFT))
         count = 0
@@ -69,7 +69,7 @@ class TvPlanningService:
         if count == 0:
             await self.operation_plans.delete(plan)
             await self.session.flush()
-            raise NoMatchedItemsError("No approved TV shows could be planned.")
+            raise NoMatchedItemsError("Нет сериалов для добавления в план.")
         plan.status = PlanStatus.READY
         await self.session.commit()
         await self.session.refresh(plan)

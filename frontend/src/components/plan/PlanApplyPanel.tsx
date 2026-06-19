@@ -84,7 +84,7 @@ export function PlanApplyPanel({
           <p className="muted plan-summary-line">{formatPlanSummaryLine(summary)}</p>
           {tvPlan ? (
             <p className="muted">
-              Применение сериалов пока отключено. Проверьте dry-run план, файлы не изменены.
+              Сейчас можно проверить, как MediaForge распознал сериалы, сезоны, эпизоды и будущие пути. Применение сериалов пока отключено.
             </p>
           ) : (
             <p className="muted">
@@ -101,7 +101,7 @@ export function PlanApplyPanel({
           ) : null}
           {tvPlan ? (
             <p className="message warning">
-              Сериалный план пока доступен только для просмотра. Применение будет включено после отдельной проверки безопасности.
+              Это предварительный план сериалов. Файлы пока не изменяются.
             </p>
           ) : null}
         </div>

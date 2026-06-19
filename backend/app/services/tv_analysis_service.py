@@ -131,7 +131,7 @@ class TvAnalysisService:
             details = await fetch_localized_details(client, tmdb_id=picked.tmdb_id, media_type="tv")
             source = "manual_tvdb_id"
         else:
-            raise ValueError("Provide tmdb_id, imdb_id, or tvdb_id.")
+            raise ValueError("Укажите TMDB ID, IMDb ID или TVDB ID.")
 
         if select:
             await self._apply_show_details(show, details, source)
@@ -160,9 +160,12 @@ class TvAnalysisService:
         if payload.decision not in {ReviewDecision.APPROVED, ReviewDecision.IGNORED, ReviewDecision.DEFERRED, ReviewDecision.MANUAL_OVERRIDE}:
             raise ValueError(f"Unsupported review decision: {payload.decision}")
         show.review_decision = payload.decision
-        show.needs_review = payload.decision not in {ReviewDecision.APPROVED, ReviewDecision.IGNORED, ReviewDecision.DEFERRED, ReviewDecision.MANUAL_OVERRIDE} and bool(show.needs_review)
         if payload.decision in {ReviewDecision.APPROVED, ReviewDecision.MANUAL_OVERRIDE}:
             show.needs_review = False
+        elif payload.decision in {ReviewDecision.IGNORED, ReviewDecision.DEFERRED}:
+            show.needs_review = False
+        if payload.decision == ReviewDecision.MANUAL_OVERRIDE:
+            show.match_source = show.match_source or "manual_override"
         await self.session.commit()
         await self.session.refresh(show)
         return show
@@ -372,5 +375,5 @@ def _pick_tv_result(results: list[TmdbSearchResult]) -> TmdbSearchResult:
         if result.media_type == "tv":
             return result
     if not results:
-        raise LookupError("TV show was not found in TMDB.")
+        raise LookupError("Сериал не найден в TMDB.")
     return results[0]

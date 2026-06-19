@@ -1269,6 +1269,20 @@ th {
   margin-top: 0.6rem;
 }
 
+.tv-status-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tv-manual-match-panel {
+  margin-top: 0.65rem;
+}
+
+.tv-candidate-list {
+  margin-top: 0.75rem;
+}
+
 .tv-season-details {
   border-top: 1px solid #e2e8f0;
   padding-top: 0.4rem;

@@ -2,8 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.models.enums import ReviewDecision
+from backend.app.models.enums import MediaFileKind, ReviewDecision
+from backend.app.models.media_file import MediaFile
 from backend.app.models.scan_session import ScanSession
+from backend.app.models.tv_episode import TvEpisode
+from backend.app.models.tv_season import TvSeason
+from backend.app.models.tv_show import TvShow
 from backend.app.repositories.media_item_repository import MediaItemRepository
 from backend.app.services.media_classification_service import MediaClassificationService
 from backend.app.services.parser_service import ParserService
@@ -14,6 +18,7 @@ from backend.app.services.scanner_service import ScannerService
 from backend.app.services.tv_analysis_service import TvAnalysisService
 from backend.app.services.tv_planning_service import TvPlanningService
 from backend.app.repositories.plan_operation_repository import PlanOperationRepository
+from backend.app.schemas.tv import TvReviewDecisionRequest
 from backend.tests.fakes import FakeTmdbClient
 
 
@@ -217,5 +222,182 @@ async def test_ignored_and_deferred_tv_shows_are_excluded_from_plan(db_session, 
     )
     await db_session.commit()
 
-    with pytest.raises(NoMatchedItemsError):
+    with pytest.raises(NoMatchedItemsError, match="Нет сериалов для добавления"):
         await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+
+
+@pytest.mark.asyncio
+async def test_tv_review_decisions_control_plan_inclusion(db_session, tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    video = source / "Show A S01E01.mkv"
+    video.write_text("video")
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.flush()
+    media_file = MediaFile(
+        scan_session_id=scan_session.id,
+        path=str(video),
+        file_name=video.name,
+        extension=".mkv",
+        kind=MediaFileKind.VIDEO,
+        is_video=True,
+        size_bytes=5,
+    )
+    db_session.add(media_file)
+    await db_session.flush()
+    show = TvShow(scan_session_id=scan_session.id, local_group_id="show-a", title="Show A", year=2024, review_decision=ReviewDecision.PENDING, needs_review=True)
+    db_session.add(show)
+    await db_session.flush()
+    season = TvSeason(show_id=show.id, season_number=1, title="Season 01")
+    db_session.add(season)
+    await db_session.flush()
+    db_session.add(
+        TvEpisode(
+            show_id=show.id,
+            season_id=season.id,
+            source_file_id=media_file.id,
+            season_number=1,
+            episode_number=1,
+            source_path=str(video),
+            needs_review=False,
+        )
+    )
+    await db_session.commit()
+
+    service = TvAnalysisService(db_session)
+    confirmed = await service.apply_review_decision(show.id, TvReviewDecisionRequest(decision="approved"))
+    assert confirmed.review_decision == ReviewDecision.APPROVED
+    assert confirmed.needs_review is False
+    plan = await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+    operations = await PlanOperationRepository(db_session).list_by_plan(plan.id)
+    assert any((operation.payload_json or {}).get("tv_show_title") == "Show A" for operation in operations)
+
+    ignored = await service.apply_review_decision(show.id, TvReviewDecisionRequest(decision="ignored"))
+    assert ignored.review_decision == ReviewDecision.IGNORED
+    with pytest.raises(NoMatchedItemsError, match="Нет сериалов для добавления"):
+        await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+
+    deferred = await service.apply_review_decision(show.id, TvReviewDecisionRequest(decision="deferred"))
+    assert deferred.review_decision == ReviewDecision.DEFERRED
+    with pytest.raises(NoMatchedItemsError, match="Нет сериалов для добавления"):
+        await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+
+    returned = await service.apply_review_decision(show.id, TvReviewDecisionRequest(decision="approved"))
+    assert returned.review_decision == ReviewDecision.APPROVED
+    rebuilt = await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+    assert rebuilt.status == "READY"
+
+
+@pytest.mark.asyncio
+async def test_tv_manual_override_by_ids_updates_show_and_preserves_episode_mapping(db_session, tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    video = source / "Wrong Show S01E01.mkv"
+    video.write_text("video")
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.flush()
+    media_file = MediaFile(
+        scan_session_id=scan_session.id,
+        path=str(video),
+        file_name=video.name,
+        extension=".mkv",
+        kind=MediaFileKind.VIDEO,
+        is_video=True,
+        size_bytes=5,
+    )
+    db_session.add(media_file)
+    await db_session.flush()
+    show = TvShow(scan_session_id=scan_session.id, local_group_id="show-a", title="Wrong Show", review_decision=ReviewDecision.PENDING, needs_review=True)
+    db_session.add(show)
+    await db_session.flush()
+    season = TvSeason(show_id=show.id, season_number=1, title="Season 01")
+    db_session.add(season)
+    await db_session.flush()
+    episode = TvEpisode(
+        show_id=show.id,
+        season_id=season.id,
+        source_file_id=media_file.id,
+        season_number=1,
+        episode_number=1,
+        source_path=str(video),
+        needs_review=False,
+    )
+    db_session.add(episode)
+    await db_session.commit()
+
+    tmdb = FakeTmdbClient(
+        tv_details={
+            777: TmdbDetailsResult(
+                tmdb_id=777,
+                media_type="tv",
+                title="Correct Show",
+                year=2022,
+                poster_path="/poster.jpg",
+                external_ids=TmdbExternalIds(imdb_id="tt7654321", tvdb_id=987),
+            )
+        },
+        find_results={
+            ("tt7654321", "imdb_id"): [TmdbSearchResult(tmdb_id=777, media_type="tv", title="Correct Show", year=2022)],
+            ("987", "tvdb_id"): [TmdbSearchResult(tmdb_id=777, media_type="tv", title="Correct Show", year=2022)],
+        },
+        tv_season_details={
+            (777, 1): TmdbSeasonDetailsResult(
+                tmdb_season_id=111,
+                season_number=1,
+                episodes=[TmdbEpisodeResult(tmdb_episode_id=222, season_number=1, episode_number=1, title="Pilot")],
+            )
+        },
+    )
+    service = TvAnalysisService(db_session, tmdb_client=tmdb)
+
+    searched = await service.search_show_tmdb(show.id, "Correct Show")
+    assert searched == []
+    assert tmdb.movie_calls == []
+    updated_by_tmdb = await service.lookup_show_tmdb(show.id, tmdb_id=777, select=True)
+    assert updated_by_tmdb.review_decision == ReviewDecision.MANUAL_OVERRIDE
+    assert updated_by_tmdb.match_source == "manual_tmdb_id"
+    updated = await service.lookup_show_tmdb(show.id, imdb_id="tt7654321", select=True)
+
+    assert updated.review_decision == ReviewDecision.MANUAL_OVERRIDE
+    assert updated.needs_review is False
+    assert updated.title == "Correct Show"
+    assert updated.tmdb_id == 777
+    assert updated.imdb_id == "tt7654321"
+    assert updated.tvdb_id == 987
+    assert updated.match_source == "manual_imdb_id"
+    refreshed_episode = (await service.tv.list_episodes(updated.id))[0]
+    assert refreshed_episode.source_file_id == media_file.id
+    assert refreshed_episode.source_path == str(video)
+    assert refreshed_episode.tmdb_episode_id == 222
+    assert refreshed_episode.title == "Pilot"
+
+    updated_by_tvdb = await service.lookup_show_tmdb(show.id, tvdb_id=987, select=True)
+    assert updated_by_tvdb.review_decision == ReviewDecision.MANUAL_OVERRIDE
+    assert ("987", "tvdb_id", "ru-RU") in tmdb.find_calls
+
+
+@pytest.mark.asyncio
+async def test_tv_lookup_failure_does_not_corrupt_show(db_session, tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.flush()
+    show = TvShow(scan_session_id=scan_session.id, local_group_id="show-a", title="Original Show", tmdb_id=123)
+    db_session.add(show)
+    await db_session.commit()
+
+    with pytest.raises(LookupError, match="Сериал не найден"):
+        await TvAnalysisService(db_session, tmdb_client=FakeTmdbClient()).lookup_show_tmdb(show.id, imdb_id="tt0000000", select=True)
+
+    refreshed = await TvAnalysisService(db_session).get_show(show.id)
+    assert refreshed.title == "Original Show"
+    assert refreshed.tmdb_id == 123
