@@ -62,6 +62,8 @@ async def apply_operation_plan(
     except OperationPlanNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PlanApplyError as exc:
+        if exc.error_code:
+            raise HTTPException(status_code=400, detail={"error_code": exc.error_code, "message": str(exc)}) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

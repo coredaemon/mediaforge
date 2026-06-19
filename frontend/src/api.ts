@@ -53,6 +53,7 @@ export class ApiError extends Error {
 }
 
 type PydanticError = { msg?: string; loc?: (string | number)[]; type?: string };
+type ApiErrorDetail = { error_code?: string; message?: string; error?: string };
 
 function formatPydanticErrors(errors: PydanticError[]): string {
   return errors
@@ -64,6 +65,9 @@ function formatPydanticErrors(errors: PydanticError[]): string {
 }
 
 function formatHttpError(status: number, detail?: string): string {
+  if (detail === "tv_apply_disabled" || detail?.includes("TV apply is intentionally disabled")) {
+    return "Применение сериалов пока отключено в этой версии. Проверьте предварительный план, файлы не изменены.";
+  }
   if (detail) return detail;
   if (status === 404) return "Сессия не найдена";
   if (status === 409) return "Операция не может быть выполнена из-за конфликта данных.";
@@ -90,11 +94,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     let detail: string | undefined;
     try {
-      const payload = (await response.json()) as { detail?: string | PydanticError[] };
+      const payload = (await response.json()) as { detail?: string | PydanticError[] | ApiErrorDetail };
       if (typeof payload.detail === "string") {
         detail = payload.detail;
-      } else if (Array.isArray(payload.detail) && payload.detail.length > 0) {
-        detail = formatPydanticErrors(payload.detail);
+      } else if (Array.isArray(payload.detail)) {
+        if (payload.detail.length > 0) detail = formatPydanticErrors(payload.detail);
+      } else if (payload.detail && typeof payload.detail === "object") {
+        detail = payload.detail.message ?? payload.detail.error ?? payload.detail.error_code ?? JSON.stringify(payload.detail);
       }
     } catch {
       const text = await response.text().catch(() => "");

@@ -1045,6 +1045,11 @@ type ReviewPayload = {
   manual_media_type?: string | null;
 };
 
+function fileNameFromPath(path?: string | null): string {
+  if (!path) return "—";
+  return path.split(/[\\/]/).pop() || path;
+}
+
 function TvReviewSection({
   shows,
   busy,
@@ -1098,8 +1103,8 @@ function TvReviewSection({
                 <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "deferred")}>Отложить</button>
               </div>
               <div className="tv-season-list">
-                {show.seasons.map((season) => (
-                  <details key={season.id} open className="tv-season-details">
+                {show.seasons.map((season, seasonIndex) => (
+                  <details key={season.id} open={show.seasons.length <= 2 || seasonIndex === 0} className="tv-season-details">
                     <summary>
                       Сезон {season.season_number} — {season.episodes.length} серий
                     </summary>
@@ -1107,9 +1112,15 @@ function TvReviewSection({
                       {season.episodes.map((episode) => (
                         <div className="tv-episode-row" key={episode.id}>
                           <span>S{String(episode.season_number).padStart(2, "0")}E{String(episode.episode_number).padStart(2, "0")}</span>
-                          <span className="path-text">{episode.source_path ?? "—"}</span>
+                          <span className="path-text" title={episode.source_path ?? undefined}>{fileNameFromPath(episode.source_path)}</span>
                           <span>{episode.title ?? "Название будет уточнено"}</span>
                           {episode.issue || episode.warning ? <span className="status-badge warning">{episode.issue ?? episode.warning}</span> : null}
+                          {episode.source_path ? (
+                            <details className="tv-episode-path">
+                              <summary>Путь</summary>
+                              <code>{episode.source_path}</code>
+                            </details>
+                          ) : null}
                         </div>
                       ))}
                     </div>

@@ -13,6 +13,7 @@ from backend.app.services.planning_service import NoMatchedItemsError
 from backend.app.services.scanner_service import ScannerService
 from backend.app.services.tv_analysis_service import TvAnalysisService
 from backend.app.services.tv_planning_service import TvPlanningService
+from backend.app.repositories.plan_operation_repository import PlanOperationRepository
 from backend.tests.fakes import FakeTmdbClient
 
 
@@ -53,6 +54,13 @@ async def test_tv_only_folder_routes_to_tv_pipeline_without_movie_items(db_sessi
     )
     result = await TvAnalysisService(db_session, tmdb_client=tmdb).analyze_scan_session(scan_session.id)
     shows = await TvAnalysisService(db_session, tmdb_client=tmdb).list_shows(scan_session.id)
+    for show in shows:
+        show.review_decision = ReviewDecision.APPROVED
+        show.needs_review = False
+    await db_session.commit()
+    plan = await TvPlanningService(db_session).create_plan_for_scan_session(scan_session.id, force=True)
+    operations = await PlanOperationRepository(db_session).list_by_plan(plan.id)
+    tv_payloads = [operation.payload_json or {} for operation in operations]
 
     assert classification.content_type == "tv"
     assert classification.tv_like_files == 3
@@ -60,6 +68,9 @@ async def test_tv_only_folder_routes_to_tv_pipeline_without_movie_items(db_sessi
     assert result.show_count == 2
     assert result.episode_count == 3
     assert {show.title for show in shows} == {"Show A", "Show B"}
+    assert {payload.get("tv_show_title") for payload in tv_payloads} == {"Show A", "Show B"}
+    assert all(payload.get("media_type") == "tv" for payload in tv_payloads)
+    assert all(payload.get("tv_apply_disabled") is True for payload in tv_payloads)
     assert len(tmdb.tv_calls) >= 2
     assert tmdb.movie_calls == []
 
@@ -131,15 +142,22 @@ async def test_tv_analysis_and_plan_use_direct_target_root(db_session, tmp_path:
 
     assert result.show_count == 1
     assert result.episode_count == 1
-    from backend.app.repositories.plan_operation_repository import PlanOperationRepository
-
     operations = await PlanOperationRepository(db_session).list_by_plan(plan.id)
     targets = [operation.target_path for operation in operations if operation.target_path]
+    payloads = [operation.payload_json or {} for operation in operations]
+    episode_payloads = [payload for payload in payloads if payload.get("tv_episode_id")]
     assert any("Тестовый сериал (2024)" in target for target in targets)
     assert all("TV Shows" not in target for target in targets)
     assert any("Season 01" in target for target in targets)
-    with pytest.raises(PlanApplyError):
+    assert all(payload.get("media_type") == "tv" for payload in payloads)
+    assert all(payload.get("tv_apply_disabled") is True for payload in payloads)
+    assert {payload.get("tv_show_title") for payload in payloads} == {"Тестовый сериал"}
+    assert any(payload.get("season_number") == 1 for payload in payloads)
+    assert any(payload.get("episode_number") == 1 for payload in episode_payloads)
+    with pytest.raises(PlanApplyError) as exc_info:
         await ApplyService(db_session).apply_plan(plan.id, confirm=True)
+    assert exc_info.value.error_code == "tv_apply_disabled"
+    assert "Применение сериалов пока отключено" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.api.routes.scan_sessions import get_tmdb_client
 from backend.app.main import app
-from backend.app.schemas.tmdb import TmdbSearchResult
+from backend.app.schemas.tmdb import TmdbDetailsResult, TmdbEpisodeResult, TmdbSearchResult, TmdbSeasonDetailsResult
 from backend.tests.fakes import FakeTmdbClient
 
 
@@ -87,3 +87,51 @@ def test_create_plan_without_matched_items_returns_400(client: TestClient, tmp_p
 
     assert response.status_code == 400
     assert "no matched media items" in response.json()["detail"].lower()
+
+
+def test_tv_plan_apply_api_returns_disabled_code(client: TestClient, tmp_path) -> None:
+    fake_client = FakeTmdbClient(
+        tv_results=[TmdbSearchResult(tmdb_id=123, media_type="tv", title="Test Show", year=2024)],
+        tv_details={123: TmdbDetailsResult(tmdb_id=123, media_type="tv", title="Test Show", year=2024)},
+        tv_season_details={
+            (123, 1): TmdbSeasonDetailsResult(
+                tmdb_season_id=456,
+                season_number=1,
+                episodes=[TmdbEpisodeResult(tmdb_episode_id=789, season_number=1, episode_number=1, title="Pilot")],
+            )
+        },
+    )
+    app.dependency_overrides[get_tmdb_client] = lambda: fake_client
+
+    source_path = tmp_path / "inbox"
+    target_path = tmp_path / "library"
+    (source_path / "Test Show" / "Season 01").mkdir(parents=True)
+    target_path.mkdir()
+    (source_path / "Test Show" / "Season 01" / "Test Show S01E01.mkv").write_bytes(b"episode")
+
+    create_response = client.post(
+        "/scan-sessions",
+        json={"source_path": str(source_path), "target_path": str(target_path)},
+    )
+    session_id = create_response.json()["id"]
+    assert client.post(f"/scan-sessions/{session_id}/discover").status_code == 200
+    assert client.post(f"/scan-sessions/{session_id}/parse").status_code == 200
+    assert client.post(f"/scan-sessions/{session_id}/analyze-tv").status_code == 200
+
+    shows_response = client.get(f"/scan-sessions/{session_id}/tv-shows")
+    assert shows_response.status_code == 200
+    show_id = shows_response.json()[0]["id"]
+    decision_response = client.post(f"/tv-shows/{show_id}/review-decision", json={"decision": "approved"})
+    assert decision_response.status_code == 200
+
+    plan_response = client.post(f"/scan-sessions/{session_id}/plan-tv?force=true")
+    assert plan_response.status_code == 200
+    plan_id = plan_response.json()["id"]
+    apply_response = client.post(f"/operation-plans/{plan_id}/apply", json={"confirm": True})
+
+    assert apply_response.status_code == 400
+    detail = apply_response.json()["detail"]
+    assert detail["error_code"] == "tv_apply_disabled"
+    assert "Применение сериалов пока отключено" in detail["message"]
+
+    app.dependency_overrides.pop(get_tmdb_client, None)

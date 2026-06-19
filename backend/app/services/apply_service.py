@@ -23,8 +23,16 @@ from .plan_validation_service import PlanValidationService
 from .planning_service import OperationPlanNotFoundError
 
 
+TV_APPLY_DISABLED_CODE = "tv_apply_disabled"
+TV_APPLY_DISABLED_MESSAGE = "Применение сериалов пока отключено в этой версии. Проверьте предварительный план, файлы не изменены."
+
+
 class PlanApplyError(ValueError):
     """Raised when plan apply preconditions fail."""
+
+    def __init__(self, message: str, *, error_code: str | None = None) -> None:
+        super().__init__(message)
+        self.error_code = error_code
 
 
 class ApplyService:
@@ -59,7 +67,7 @@ class ApplyService:
         if not operations:
             raise PlanApplyError("Plan has no operations")
         if any((operation.payload_json or {}).get("tv_apply_disabled") for operation in operations):
-            raise PlanApplyError("TV apply is intentionally disabled in this release; inspect the dry-run plan only.")
+            raise PlanApplyError(TV_APPLY_DISABLED_MESSAGE, error_code=TV_APPLY_DISABLED_CODE)
 
         apply_run = await self.apply_runs.create(
             ApplyRun(

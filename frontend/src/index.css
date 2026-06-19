@@ -1164,11 +1164,22 @@ th {
   padding-left: 1.25rem;
 }
 
-.plan-movie-group {
+.plan-movie-group,
+.plan-tv-group {
   margin-bottom: 0.5rem;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 0.5rem 0.75rem;
+}
+
+.plan-tv-group-summary {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.plan-tv-season-group {
+  margin: 0.35rem 0;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 0.35rem;
 }
 
 .plan-op-list {
@@ -1276,11 +1287,27 @@ th {
 
 .tv-episode-row {
   display: grid;
-  grid-template-columns: 5rem minmax(10rem, 1.5fr) minmax(8rem, 1fr) auto;
+  grid-template-columns: 5rem minmax(10rem, 1.5fr) minmax(8rem, 1fr) auto minmax(4rem, auto);
   gap: 0.5rem;
   align-items: center;
   min-height: 2rem;
   font-size: 0.9rem;
+}
+
+.tv-episode-path {
+  min-width: 0;
+}
+
+.tv-episode-path summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tv-episode-path code {
+  display: block;
+  margin-top: 0.25rem;
+  white-space: normal;
+  word-break: break-all;
 }
 
 @media (max-width: 760px) {

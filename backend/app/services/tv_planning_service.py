@@ -77,20 +77,22 @@ class TvPlanningService:
 
     async def _build_operations_for_show(self, show, target_root: Path) -> list[PlanOperation]:
         show_folder = build_tv_show_folder_path_direct(target_root, show.title, show.year)
+        base_payload = _tv_payload(show)
         operations = [
-            _create_dir(show_folder, show.id),
-            _write_text(show_folder / "tvshow.nfo", {"tv_show_id": show.id, "nfo_type": "tvshow", "tv_apply_disabled": True}),
+            _create_dir(show_folder, base_payload),
+            _write_text(show_folder / "tvshow.nfo", {**base_payload, "nfo_type": "tvshow"}),
         ]
         if show.poster_path:
-            operations.append(_download(show.poster_path, show_folder / "poster.jpg", show.id, "poster"))
+            operations.append(_download(show.poster_path, show_folder / "poster.jpg", base_payload, "poster"))
         if show.backdrop_path:
-            operations.append(_download(show.backdrop_path, show_folder / "fanart.jpg", show.id, "backdrop"))
+            operations.append(_download(show.backdrop_path, show_folder / "fanart.jpg", base_payload, "backdrop"))
         seasons = await self.tv.list_seasons(show.id)
         for season in seasons:
             season_folder = build_tv_season_folder_path_direct(target_root, show.title, season.season_number, show.year)
-            operations.append(_create_dir(season_folder, show.id))
+            season_payload = _tv_payload(show, season=season)
+            operations.append(_create_dir(season_folder, season_payload))
             if season.poster_path:
-                operations.append(_download(season.poster_path, season_folder / "poster.jpg", show.id, "season_poster"))
+                operations.append(_download(season.poster_path, season_folder / "poster.jpg", season_payload, "season_poster"))
         for episode in await self.tv.list_episodes(show.id):
             if episode.needs_review or not episode.source_file_id:
                 continue
@@ -114,24 +116,41 @@ class TvPlanningService:
                     status=OperationStatus.PENDING,
                     source_path=media_file.path,
                     target_path=str(target_video),
-                    payload_json={"tv_show_id": show.id, "tv_episode_id": episode.id, "tv_apply_disabled": True},
+                    payload_json=_tv_payload(show, episode=episode),
                 )
             )
             operations.append(
                 _write_text(
                     target_video.with_suffix(".nfo"),
-                    {"tv_show_id": show.id, "tv_episode_id": episode.id, "nfo_type": "episode", "tv_apply_disabled": True},
+                    {**_tv_payload(show, episode=episode), "nfo_type": "episode"},
                 )
             )
         return operations
 
 
-def _create_dir(path: Path, show_id: int) -> PlanOperation:
+def _tv_payload(show, *, season=None, episode=None) -> dict:
+    season_number = getattr(season, "season_number", None) if season is not None else None
+    if episode is not None:
+        season_number = episode.season_number
+    return {
+        "media_type": "tv",
+        "tv_apply_disabled": True,
+        "tv_show_id": show.id,
+        "tv_show_title": show.title,
+        "tv_show_year": show.year,
+        "tv_season_id": getattr(season, "id", None),
+        "season_number": season_number,
+        "tv_episode_id": getattr(episode, "id", None),
+        "episode_number": getattr(episode, "episode_number", None),
+    }
+
+
+def _create_dir(path: Path, payload: dict) -> PlanOperation:
     return PlanOperation(
         operation_type=OperationType.CREATE_DIR,
         status=OperationStatus.PENDING,
         target_path=str(path),
-        payload_json={"tv_show_id": show_id, "tv_apply_disabled": True},
+        payload_json=payload,
     )
 
 
@@ -144,11 +163,11 @@ def _write_text(path: Path, payload: dict) -> PlanOperation:
     )
 
 
-def _download(tmdb_path: str, path: Path, show_id: int, asset_type: str) -> PlanOperation:
+def _download(tmdb_path: str, path: Path, payload: dict, asset_type: str) -> PlanOperation:
     return PlanOperation(
         operation_type=OperationType.DOWNLOAD_FILE,
         status=OperationStatus.PENDING,
         source_path=tmdb_image_download_url(tmdb_path),
         target_path=str(path),
-        payload_json={"tv_show_id": show_id, "asset_type": asset_type, "tmdb_path": tmdb_path, "tv_apply_disabled": True},
+        payload_json={**payload, "asset_type": asset_type, "tmdb_path": tmdb_path},
     )
