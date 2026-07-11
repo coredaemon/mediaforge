@@ -37,8 +37,9 @@ import { PlanApplyPanel } from "../components/plan/PlanApplyPanel";
 import { BulkReviewToolbar } from "../components/review/BulkReviewToolbar";
 import { CandidatesModal } from "../components/review/CandidatesModal";
 import { PipelinePanel } from "../components/session/PipelinePanel";
-import { ItemList, TechnicalTables, TvReviewSection, tvShowReviewState } from "../components/session/ReviewSections";
+import { ItemList, TechnicalTables, TvReviewSection } from "../components/session/ReviewSections";
 import { SessionHeader } from "../components/session/SessionHeader";
+import { tvShowReviewState } from "../components/session/tvReviewState";
 import { getPreflightShortMessage } from "../aiLabels";
 import { t } from "../i18n";
 import { useSessionData } from "../hooks/useSessionData";
@@ -229,7 +230,7 @@ export function SessionDetailPage() {
       }
       return null;
     }
-  }, [numId]);
+  }, [numId, setError]);
 
   const loadAll = useCallback(async () => {
     if (!Number.isFinite(numId)) return;
@@ -254,14 +255,14 @@ export function SessionDetailPage() {
     }
 
     setLoading(false);
-  }, [numId, selectedItemId, loadSessionHeader, loadReview, loadPlan]);
+  }, [numId, selectedItemId, loadSessionHeader, loadReview, loadPlan, setError, setLoading]);
 
   useEffect(() => {
     void loadAll();
   }, [loadAll]);
 
   const isTvOnlySession = classification?.content_type === "tv";
-  const movieFlowItems = isTvOnlySession ? [] : items;
+  const movieFlowItems = useMemo(() => (isTvOnlySession ? [] : items), [isTvOnlySession, items]);
   const tvSeasonCount = tvShows.reduce((total, show) => total + show.seasons.length, 0);
   const tvEpisodeCount = tvShows.reduce(
     (total, show) => total + show.seasons.reduce((seasonTotal, season) => seasonTotal + season.episodes.length, 0),
@@ -571,10 +572,6 @@ export function SessionDetailPage() {
     });
   }
 
-  if (!Number.isFinite(numId)) {
-    return <div className="message error">РќРµРІРµСЂРЅС‹Р№ ID СЃРµСЃСЃРёРё.</div>;
-  }
-
   const busy = actionLoading !== null;
   const nestingWarning = session ? detectPathNestingWarning(session.source_path, session.target_path) : null;
 
@@ -600,6 +597,10 @@ export function SessionDetailPage() {
 
     return () => window.clearInterval(intervalId);
   }, [applyRuns, latestPlanId, loadApplyRuns, numId, plans, selectedPlanId]);
+
+  if (!Number.isFinite(numId)) {
+    return <div className="message error">РќРµРІРµСЂРЅС‹Р№ ID СЃРµСЃСЃРёРё.</div>;
+  }
 
   async function handleDeleteSession() {
     if (!session) return;
@@ -902,7 +903,6 @@ export function SessionDetailPage() {
     </div>
   );
 }
-
 
 
 

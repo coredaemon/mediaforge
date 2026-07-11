@@ -14,6 +14,7 @@ import { isBulkSelectable } from "../../utils/bulkSelection";
 import { candidatePosterUrl } from "../../utils/tmdb";
 import { validateIdLookupInput } from "../../validation";
 import { CompactMediaItemRow } from "../review/CompactMediaItemRow";
+import { tvShowReviewState, type TvReviewState } from "./tvReviewState";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString("ru-RU");
@@ -85,7 +86,7 @@ export function TvReviewSection({
         </span>
       </div>
       {planStale ? (
-        <p className="message warning">Р РµС€РµРЅРёСЏ РїРѕ СЃРµСЂРёР°Р»Р°Рј РёР·РјРµРЅРёР»РёСЃСЊ. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ.</p>
+        <p className="message warning">Р РµС€РµРЅРёСЏ РїРѕ СЃРµСЂРёР°Р»Р°Рј РёР·РјРµРЅРёР»РёСЃСЊ. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ.</p>
       ) : null}
       <div className="review-item-list">
         {shows.map((show) => {
@@ -173,16 +174,6 @@ export function TvReviewSection({
       </div>
     </section>
   );
-}
-
-type TvReviewState = "included" | "needs_review" | "ignored" | "deferred" | "manual_override";
-
-export function tvShowReviewState(show: TvShow): TvReviewState {
-  if (show.review_decision === "ignored") return "ignored";
-  if (show.review_decision === "deferred") return "deferred";
-  if (show.review_decision === "manual_override") return "manual_override";
-  if (show.needs_review || show.seasons.some((season) => season.episodes.some((episode) => episode.needs_review))) return "needs_review";
-  return "included";
 }
 
 function tvShowStatusParts(show: TvShow): { label: string; tone: BadgeTone }[] {
