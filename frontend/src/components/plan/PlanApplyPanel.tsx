@@ -24,6 +24,7 @@ type Props = {
   onSelectPlan: (planId: number) => void;
   onValidate: () => void;
   onApplyClick: () => void;
+  onRollbackClick: () => void;
 };
 
 function itemTitle(item: MediaItem | undefined, itemId: number | null): string {
@@ -82,15 +83,21 @@ export function PlanApplyPanel({
   onSelectPlan,
   onValidate,
   onApplyClick,
+  onRollbackClick,
 }: Props) {
   const activePlan = plans.find((p) => p.id === selectedPlanId) ?? plans[0] ?? null;
   const summary = buildPlanSummary(operations, items, validation?.conflict_count ?? 0);
   const tvPlan = hasTvOperations(operations);
   const tvOnly = tvPlan && summary.movies === 0;
   const applyAllowed = canApplyPlan(activePlan, validation, operations.length);
+  const rollbackAllowed = activePlan?.status === "APPLIED" || activePlan?.status === "FAILED";
   const grouped = groupOperationsByItem(operations.filter((op) => !isTvOperation(op)));
   const tvGroups = groupTvOperationsByShow(operations);
   const itemMap = new Map(items.map((item) => [item.id, item]));
+  const latestRun = applyRuns[0] ?? null;
+  const runProgressTotal = latestRun?.total_operations ?? 0;
+  const runProgressDone = (latestRun?.done_operations ?? 0) + (latestRun?.failed_operations ?? 0);
+  const runProgressPercent = runProgressTotal > 0 ? Math.round((runProgressDone / runProgressTotal) * 100) : 0;
 
   return (
     <section className="panel plan-apply-panel">
@@ -137,6 +144,11 @@ export function PlanApplyPanel({
           >
             Применить план
           </button>
+          {rollbackAllowed ? (
+            <button type="button" disabled={busy} onClick={onRollbackClick}>
+              Откатить изменения
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -151,6 +163,20 @@ export function PlanApplyPanel({
         <p className={applyResult.failed_operations > 0 ? "message error" : "message success"}>
           {formatApplyResult(applyResult, summary, tvPlan)}
         </p>
+      ) : null}
+
+      {latestRun?.status === "running" ? (
+        <div className="apply-progress" aria-label="Прогресс применения">
+          <div className="apply-progress-label">
+            <span>Применение выполняется</span>
+            <span>
+              {runProgressDone} из {runProgressTotal} операций
+            </span>
+          </div>
+          <div className="apply-progress-track">
+            <div className="apply-progress-bar" style={{ width: `${runProgressPercent}%` }} />
+          </div>
+        </div>
       ) : null}
 
       {plans.length > 0 ? (

@@ -6,6 +6,13 @@
     <title>MediaForge</title>
   </head>
   <body>
+    <script>
+      (() => {
+        const stored = localStorage.getItem("mediaforge-theme");
+        const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        document.documentElement.dataset.theme = stored || (systemDark ? "dark" : "light");
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

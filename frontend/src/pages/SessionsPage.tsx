@@ -5,6 +5,7 @@ import { FolderPickerModal } from "../components/FolderPickerModal";
 import { t } from "../i18n";
 import { labelScanSessionStatus } from "../labels";
 import type { ScanSession } from "../types";
+import { formatPath } from "../utils/formatPath";
 
 function formatDate(value: string): string {
   return new Date(value).toLocaleString("ru-RU");
@@ -174,7 +175,13 @@ export function SessionsPage() {
       <section className="panel">
         <h2>{t.sessions.title}</h2>
         {loading ? <p className="muted">{t.common.loading}</p> : null}
-        {!loading && sessions.length === 0 ? <p className="muted">{t.sessions.noSessions}</p> : null}
+        {!loading && sessions.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">＋</div>
+            <strong>{t.sessions.noSessions}</strong>
+            <span>{t.sessions.quickStartHint}</span>
+          </div>
+        ) : null}
         {!loading && sessions.length > 0 ? (
           <div className="table-wrap">
             <table>
@@ -192,8 +199,8 @@ export function SessionsPage() {
                 {sessions.map((s) => (
                   <tr key={s.id}>
                     <td>{s.id}</td>
-                    <td>{s.source_path}</td>
-                    <td>{s.target_path}</td>
+                    <td className="path-short" title={s.source_path}>{formatPath(s.source_path)}</td>
+                    <td className="path-short" title={s.target_path}>{formatPath(s.target_path)}</td>
                     <td>{labelScanSessionStatus(s.status)}</td>
                     <td>{formatDate(s.created_at)}</td>
                     <td className="table-actions">

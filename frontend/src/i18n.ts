@@ -127,7 +127,7 @@ export const t = {
     frontendUrl: "Frontend URL",
     healthLabel: "Backend",
     disclaimer:
-      "Apply, rollback, скачивание постеров и запись NFO не реализованы. Планирование — только preview.",
+      "Изменения применяются только после явного подтверждения. Доступен откат применённого плана.",
   },
 
   // Setup wizard

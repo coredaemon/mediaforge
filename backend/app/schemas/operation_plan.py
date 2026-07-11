@@ -58,6 +58,16 @@ class PlanApplyResult(BaseModel):
     error_message: str | None = None
 
 
+class PlanRollbackResult(BaseModel):
+    plan_id: int
+    apply_run_id: int
+    status: PlanStatus
+    total_operations: int
+    rolled_back_operations: int
+    failed_operations: int
+    error_message: str | None = None
+
+
 class ApplyOperationLogRead(BaseModel):
     id: int
     apply_run_id: int

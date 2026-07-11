@@ -1,13 +1,22 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_DATABASE_PATH = PROJECT_ROOT / "mediaforge.local.sqlite3"
+
+
+def _default_database_url() -> str:
+    return f"sqlite+aiosqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
+
+
 class Settings(BaseSettings):
     environment: str = Field(default="development", alias="MEDIAFORGE_ENV")
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./mediaforge.local.sqlite3",
+        default_factory=_default_database_url,
         alias="MEDIAFORGE_DATABASE_URL",
     )
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
