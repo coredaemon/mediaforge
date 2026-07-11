@@ -35,6 +35,13 @@ function StepBadge({ status }: { status: StepStatus }) {
   return <Badge label={labels[status]} tone={tones[status]} />;
 }
 
+function stepIcon(status: StepStatus): string {
+  if (status === "done") return "✓";
+  if (status === "running") return "•";
+  if (status === "error") return "×";
+  return "";
+}
+
 function PreflightCheckBlock({
   title,
   check,
@@ -134,11 +141,13 @@ export function PipelinePanel({
       <details className="analysis-details" open={!analysisCollapsed}>
         <summary>Статус pipeline и проверка AI</summary>
         <PreflightPanel result={preflightResult} status={stepStatus.preflight ?? "pending"} />
-        <div className="analysis-steps compact-analysis-steps">
+        <div className="pipeline-stepper">
           {analysisSteps.map((step) => (
-            <span key={step.key} className="analysis-step-chip">
-              {step.label} <StepBadge status={stepStatus[step.key] ?? "pending"} />
-            </span>
+            <div key={step.key} className={`pipeline-step ${stepStatus[step.key] ?? "pending"}`}>
+              <span className="pipeline-step-marker">{stepIcon(stepStatus[step.key] ?? "pending")}</span>
+              <span>{step.label}</span>
+              <StepBadge status={stepStatus[step.key] ?? "pending"} />
+            </div>
           ))}
         </div>
       </details>

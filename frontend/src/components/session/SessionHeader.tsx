@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { labelScanSessionStatus, statusTone } from "../../labels";
 import { t } from "../../i18n";
 import type { ScanSession } from "../../types";
+import { formatPath } from "../../utils/formatPath";
 
 function Badge({ value, label }: { value: string; label: string }) {
   return <span className={`status-badge ${statusTone(value)}`}>{label}</span>;
@@ -46,8 +47,9 @@ export function SessionHeader({
         <div>
           <h2>Сессия #{sessionId}</h2>
           {session ? (
-            <p className="muted">
-              {session.source_path} → {session.target_path}
+            <p className="muted" title={`${session.source_path} → ${session.target_path}`}>
+              <span className="path-short">{formatPath(session.source_path)}</span> →{" "}
+              <span className="path-short">{formatPath(session.target_path)}</span>
             </p>
           ) : null}
         </div>

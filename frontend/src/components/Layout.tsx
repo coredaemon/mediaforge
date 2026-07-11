@@ -8,6 +8,7 @@ type HealthState = "loading" | "ok" | "error";
 export function Layout() {
   const [healthState, setHealthState] = useState<HealthState>("loading");
   const [healthMessage, setHealthMessage] = useState<string>(t.health.checking);
+  const [theme, setTheme] = useState(() => document.documentElement.dataset.theme || "light");
 
   useEffect(() => {
     let active = true;
@@ -34,6 +35,13 @@ export function Layout() {
     };
   }, []);
 
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("mediaforge-theme", next);
+    setTheme(next);
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -49,6 +57,9 @@ export function Layout() {
             <span className={`health-dot ${healthState}`} />
             <span>{healthState === "ok" ? t.health.online : healthMessage}</span>
           </div>
+          <button type="button" className="theme-toggle" title="Переключить тему" onClick={toggleTheme}>
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
           <Link to="/settings">
             <button type="button">⚙ {t.nav.settings}</button>
           </Link>
