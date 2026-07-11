@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +25,8 @@ from ..utils.paths import normalize_path
 from .plan_validation_service import PlanValidationService
 from .planning_service import OperationPlanNotFoundError
 from .processed_media_service import ProcessedMediaService
+
+logger = logging.getLogger(__name__)
 
 
 class PlanApplyError(ValueError):
@@ -103,6 +107,16 @@ class ApplyService:
         plan = await self.operation_plans.get_by_id(apply_run.operation_plan_id)
         if plan is None:
             raise OperationPlanNotFoundError(f"Operation plan {apply_run.operation_plan_id} was not found.")
+        if apply_run.status != ApplyRunStatus.RUNNING:
+            return PlanApplyResult(
+                plan_id=plan.id,
+                apply_run_id=apply_run.id,
+                status=plan.status,
+                total_operations=apply_run.total_operations,
+                done_operations=apply_run.done_operations,
+                failed_operations=apply_run.failed_operations,
+                error_message=apply_run.error_message,
+            )
 
         operations = list(await self.plan_operations.list_by_plan(plan.id))
         done_count = 0
@@ -409,9 +423,46 @@ class ApplyService:
         await self.session.flush()
 
 
+# Strong references keep fire-and-forget tasks alive until completion
+# (asyncio only holds weak references to scheduled tasks).
+_background_apply_tasks: set[asyncio.Task[None]] = set()
+
+
+def schedule_apply_run(
+    apply_run_id: int,
+    session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
+) -> asyncio.Task[None]:
+    task = asyncio.create_task(execute_apply_run_in_background(apply_run_id, session_factory))
+    _background_apply_tasks.add(task)
+    task.add_done_callback(_background_apply_tasks.discard)
+    return task
+
+
 async def execute_apply_run_in_background(
     apply_run_id: int,
     session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
 ) -> None:
-    async with session_factory() as session:
-        await ApplyService(session).execute_apply_run(apply_run_id)
+    try:
+        async with session_factory() as session:
+            await ApplyService(session).execute_apply_run(apply_run_id)
+    except Exception as exc:  # noqa: BLE001 - a stuck APPLYING plan is worse than a broad catch
+        logger.exception("Background apply run %s crashed", apply_run_id)
+        try:
+            async with session_factory() as session:
+                await _mark_apply_run_crashed(session, apply_run_id, str(exc))
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not mark apply run %s as failed", apply_run_id)
+
+
+async def _mark_apply_run_crashed(session: AsyncSession, apply_run_id: int, message: str) -> None:
+    apply_run = await session.get(ApplyRun, apply_run_id)
+    if apply_run is None:
+        return
+    if apply_run.status == ApplyRunStatus.RUNNING:
+        apply_run.status = ApplyRunStatus.FAILED
+        apply_run.error_message = message[:2000]
+        apply_run.finished_at = datetime.now(UTC)
+    plan = await OperationPlanRepository(session).get_by_id(apply_run.operation_plan_id)
+    if plan is not None and plan.status == PlanStatus.APPLYING:
+        plan.status = PlanStatus.FAILED
+    await session.commit()

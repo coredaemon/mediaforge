@@ -1,5 +1,4 @@
 from collections.abc import Sequence
-import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -16,7 +15,7 @@ from ...schemas.operation_plan import (
     PlanRollbackResult,
     PlanValidationResult,
 )
-from ...services.apply_service import ApplyService, PlanApplyError, execute_apply_run_in_background
+from ...services.apply_service import ApplyService, PlanApplyError, schedule_apply_run
 from ...services.plan_validation_service import PlanValidationService
 from ...services.planning_service import OperationPlanNotFoundError, PlanningService
 from ...services.rollback_service import RollbackService
@@ -63,11 +62,10 @@ async def apply_operation_plan(
     try:
         result = await ApplyService(session).start_apply(plan_id, confirm=payload.confirm)
         bind = session.bind
-        session_factory = async_sessionmaker(bind, expire_on_commit=False) if bind is not None else None
-        if session_factory is None:
-            asyncio.create_task(execute_apply_run_in_background(result.apply_run_id))
+        if bind is None:
+            schedule_apply_run(result.apply_run_id)
         else:
-            asyncio.create_task(execute_apply_run_in_background(result.apply_run_id, session_factory))
+            schedule_apply_run(result.apply_run_id, async_sessionmaker(bind, expire_on_commit=False))
         return result
     except OperationPlanNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

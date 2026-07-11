@@ -316,3 +316,39 @@ async def test_ignored_deferred_items_not_in_plan(db_session: AsyncSession, tmp_
     await db_session.commit()
     with pytest.raises(NoMatchedItemsError):
         await PlanningService(db_session).create_plan_for_scan_session(session.id)
+
+
+async def test_background_crash_marks_run_and_plan_failed(
+    db_session: AsyncSession, session_factory, tmp_path, monkeypatch
+) -> None:
+    plan_id, _, _, _ = await _create_ready_plan(db_session, tmp_path)
+    started = await ApplyService(db_session).start_apply(plan_id, confirm=True)
+
+    async def boom(self, apply_run_id: int):
+        raise RuntimeError("unexpected crash")
+
+    monkeypatch.setattr(ApplyService, "execute_apply_run", boom)
+    from backend.app.services.apply_service import execute_apply_run_in_background
+
+    await execute_apply_run_in_background(started.apply_run_id, session_factory)
+
+    db_session.expire_all()
+    run = await db_session.get(ApplyRun, started.apply_run_id)
+    plan = await OperationPlanRepository(db_session).get_by_id(plan_id)
+    assert run is not None and plan is not None
+    assert run.status == ApplyRunStatus.FAILED
+    assert "unexpected crash" in (run.error_message or "")
+    assert plan.status == PlanStatus.FAILED
+
+
+async def test_execute_apply_run_is_idempotent_after_completion(db_session: AsyncSession, tmp_path) -> None:
+    plan_id, source, target, _ = await _create_ready_plan(db_session, tmp_path)
+    service = ApplyService(db_session, http_client=_mock_http_client())
+    started = await service.start_apply(plan_id, confirm=True)
+    first = await service.execute_apply_run(started.apply_run_id)
+    assert first.status == PlanStatus.APPLIED
+
+    second = await service.execute_apply_run(started.apply_run_id)
+
+    assert second.status == PlanStatus.APPLIED
+    assert second.done_operations == first.done_operations
