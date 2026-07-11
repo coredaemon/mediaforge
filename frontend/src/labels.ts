@@ -64,7 +64,12 @@ const planStatusLabels: Record<string, string> = {
   PARTIAL: "Частично",
   COMPLETED: "Выполнен",
   FAILED: "Ошибка",
-  ROLLED_BACK: "Откачен",
+  ROLLED_BACK: "Откачено",
+  running: "Выполняется",
+  completed: "Выполнен",
+  failed: "Ошибка",
+  partial: "Частично",
+  rolled_back: "Откачено",
 };
 
 const reviewDecisionLabels: Record<string, string> = {
@@ -124,7 +129,7 @@ export function labelMatchSource(value: string | null | undefined): string {
 export function statusTone(value: string | null | undefined): BadgeTone {
   if (!value) return "neutral";
   if (["MATCHED", "READY", "DONE", "COMPLETED", "APPLIED", "PARSED", "DISCOVERED", "approved"].includes(value)) return "success";
-  if (["ignored", "deferred"].includes(value)) return "warning";
+  if (["ignored", "deferred", "ROLLED_BACK", "rolled_back"].includes(value)) return "warning";
   if (["NEEDS_REVIEW", "DRAFT"].includes(value)) return "warning";
   if (["FAILED", "UNMATCHED"].includes(value)) return "danger";
   if (["DISCOVERING", "PARSING", "MATCHING", "RUNNING", "APPLYING"].includes(value)) return "info";

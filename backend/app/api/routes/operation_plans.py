@@ -12,11 +12,13 @@ from ...schemas.operation_plan import (
     PlanApplyRequest,
     PlanApplyResult,
     PlanOperationRead,
+    PlanRollbackResult,
     PlanValidationResult,
 )
 from ...services.apply_service import ApplyService, PlanApplyError
 from ...services.plan_validation_service import PlanValidationService
 from ...services.planning_service import OperationPlanNotFoundError, PlanningService
+from ...services.rollback_service import RollbackService
 
 router = APIRouter(prefix="/operation-plans", tags=["operation-plans"])
 
@@ -59,6 +61,22 @@ async def apply_operation_plan(
 ) -> PlanApplyResult:
     try:
         return await ApplyService(session).apply_plan(plan_id, confirm=payload.confirm)
+    except OperationPlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PlanApplyError as exc:
+        if exc.error_code:
+            raise HTTPException(status_code=400, detail={"error_code": exc.error_code, "message": str(exc)}) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{plan_id}/rollback", response_model=PlanRollbackResult)
+async def rollback_operation_plan(
+    plan_id: int,
+    payload: PlanApplyRequest,
+    session: AsyncSession = Depends(get_session),
+) -> PlanRollbackResult:
+    try:
+        return await RollbackService(session).rollback_plan(plan_id, confirm=payload.confirm)
     except OperationPlanNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PlanApplyError as exc:

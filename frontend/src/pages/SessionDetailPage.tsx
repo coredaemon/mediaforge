@@ -32,6 +32,7 @@ import {
   parseSession,
   recognitionPreflight,
   resolveWithGemini,
+  rollbackPlan,
   selectTmdbCandidate,
   validatePlan,
 } from "../api";
@@ -279,6 +280,8 @@ export function SessionDetailPage() {
   const [applyResult, setApplyResult] = useState<PlanApplyResult | null>(null);
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [applyConfirmChecked, setApplyConfirmChecked] = useState(false);
+  const [showRollbackModal, setShowRollbackModal] = useState(false);
+  const [rollbackConfirmChecked, setRollbackConfirmChecked] = useState(false);
   const [analysisCollapsed, setAnalysisCollapsed] = useState(false);
   const [candidatesModalOpen, setCandidatesModalOpen] = useState(false);
 
@@ -686,6 +689,20 @@ export function SessionDetailPage() {
     }, "План применён.");
   }
 
+  async function handleRollbackPlan() {
+    const planId = selectedPlanId ?? latestPlanId;
+    if (planId === null) return;
+    setShowRollbackModal(false);
+    await runAction("rollback-plan", async () => {
+      const result = await rollbackPlan(planId, { confirm: true });
+      setApplyResult(null);
+      setInfo(`Откачено ${result.rolled_back_operations} из ${result.total_operations} операций.`);
+      setOperations(await listPlanOperations(planId));
+      setPlans(await listPlans(numId));
+      await loadApplyRuns(planId);
+    }, "План откачен.");
+  }
+
   function toggleItemSelection(itemId: number) {
     setSelectedItemIds((prev) => {
       const next = new Set(prev);
@@ -1034,6 +1051,10 @@ export function SessionDetailPage() {
           setApplyConfirmChecked(false);
           setShowApplyModal(true);
         }}
+        onRollbackClick={() => {
+          setRollbackConfirmChecked(false);
+          setShowRollbackModal(true);
+        }}
       />
 
       <ApplyConfirmModal
@@ -1044,6 +1065,16 @@ export function SessionDetailPage() {
         onCheckedChange={setApplyConfirmChecked}
         onConfirm={() => void handleApplyPlan()}
         onCancel={() => setShowApplyModal(false)}
+      />
+
+      <ApplyConfirmModal
+        open={showRollbackModal}
+        busy={busy}
+        checked={rollbackConfirmChecked}
+        variant="rollback"
+        onCheckedChange={setRollbackConfirmChecked}
+        onConfirm={() => void handleRollbackPlan()}
+        onCancel={() => setShowRollbackModal(false)}
       />
 
       <details className="panel">

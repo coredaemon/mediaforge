@@ -24,6 +24,7 @@ type Props = {
   onSelectPlan: (planId: number) => void;
   onValidate: () => void;
   onApplyClick: () => void;
+  onRollbackClick: () => void;
 };
 
 function itemTitle(item: MediaItem | undefined, itemId: number | null): string {
@@ -82,12 +83,14 @@ export function PlanApplyPanel({
   onSelectPlan,
   onValidate,
   onApplyClick,
+  onRollbackClick,
 }: Props) {
   const activePlan = plans.find((p) => p.id === selectedPlanId) ?? plans[0] ?? null;
   const summary = buildPlanSummary(operations, items, validation?.conflict_count ?? 0);
   const tvPlan = hasTvOperations(operations);
   const tvOnly = tvPlan && summary.movies === 0;
   const applyAllowed = canApplyPlan(activePlan, validation, operations.length);
+  const rollbackAllowed = activePlan?.status === "APPLIED" || activePlan?.status === "FAILED";
   const grouped = groupOperationsByItem(operations.filter((op) => !isTvOperation(op)));
   const tvGroups = groupTvOperationsByShow(operations);
   const itemMap = new Map(items.map((item) => [item.id, item]));
@@ -137,6 +140,11 @@ export function PlanApplyPanel({
           >
             Применить план
           </button>
+          {rollbackAllowed ? (
+            <button type="button" disabled={busy} onClick={onRollbackClick}>
+              Откатить изменения
+            </button>
+          ) : null}
         </div>
       </div>
 

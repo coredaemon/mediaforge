@@ -77,6 +77,7 @@ class ApplyRunStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     PARTIAL = "partial"
+    ROLLED_BACK = "rolled_back"
 
 
 class OperationStatus(StrEnum):

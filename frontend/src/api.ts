@@ -18,6 +18,7 @@ import type {
   PlanApplyRequest,
   PlanApplyResult,
   PlanOperation,
+  PlanRollbackResult,
   PlanValidationResult,
   RecognitionCorrection,
   RecognitionCorrectionCreate,
@@ -225,6 +226,13 @@ export function validatePlan(planId: number): Promise<PlanValidationResult> {
 
 export function applyPlan(planId: number, payload: PlanApplyRequest): Promise<PlanApplyResult> {
   return request<PlanApplyResult>(`/operation-plans/${planId}/apply`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function rollbackPlan(planId: number, payload: PlanApplyRequest): Promise<PlanRollbackResult> {
+  return request<PlanRollbackResult>(`/operation-plans/${planId}/rollback`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

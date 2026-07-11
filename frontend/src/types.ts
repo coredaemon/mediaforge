@@ -440,6 +440,16 @@ export interface PlanApplyResult {
   error_message: string | null;
 }
 
+export interface PlanRollbackResult {
+  plan_id: number;
+  apply_run_id: number;
+  status: string;
+  total_operations: number;
+  rolled_back_operations: number;
+  failed_operations: number;
+  error_message: string | null;
+}
+
 export interface ApplyOperationLog {
   id: number;
   apply_run_id: number;
