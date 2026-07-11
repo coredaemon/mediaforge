@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
   analyzeTvSession,
@@ -23,10 +23,6 @@ import {
   listPlans,
   listTmdbCandidates,
   listTvShows,
-  manualTvTmdbLookup,
-  manualTvTmdbSearch,
-  manualTmdbLookup,
-  manualTmdbSearch,
   matchTmdbSession,
   normalizeLocalAi,
   parseSession,
@@ -40,20 +36,13 @@ import { ApplyConfirmModal } from "../components/plan/ApplyConfirmModal";
 import { PlanApplyPanel } from "../components/plan/PlanApplyPanel";
 import { BulkReviewToolbar } from "../components/review/BulkReviewToolbar";
 import { CandidatesModal } from "../components/review/CandidatesModal";
-import { CompactMediaItemRow } from "../components/review/CompactMediaItemRow";
-import { formatPreflightStatusLabel, getPreflightShortMessage } from "../aiLabels";
+import { PipelinePanel } from "../components/session/PipelinePanel";
+import { ItemList, TechnicalTables, TvReviewSection, tvShowReviewState } from "../components/session/ReviewSections";
+import { SessionHeader } from "../components/session/SessionHeader";
+import { getPreflightShortMessage } from "../aiLabels";
 import { t } from "../i18n";
-import { validateIdLookupInput } from "../validation";
-import {
-  labelMediaItemStatus,
-  labelMediaType,
-  labelOperationStatus,
-  labelOperationType,
-  labelPlanStatus,
-  labelScanSessionStatus,
-  statusTone,
-  type BadgeTone,
-} from "../labels";
+import { useSessionData } from "../hooks/useSessionData";
+import { useSessionPipeline, type StepStatus } from "../hooks/useSessionPipeline";
 import type {
   BulkReviewResult,
   MediaFile,
@@ -67,35 +56,11 @@ import type {
   RecognitionPreflightResult,
   ScanSession,
   TmdbMatchCandidate,
-  TmdbSearchResult,
   TvShow,
 } from "../types";
-import { defaultSelectedIds, isBulkSelectable } from "../utils/bulkSelection";
+import { defaultSelectedIds } from "../utils/bulkSelection";
 import { buildPlanSummary, hasTvOperations } from "../utils/planSummary";
 import { loadSection } from "../utils/sectionLoad";
-import { candidatePosterUrl } from "../utils/tmdb";
-
-type StepStatus = "pending" | "running" | "done" | "error";
-
-const analysisSteps: { key: string; label: string }[] = [
-  { key: "discover", label: "Сканирование файлов" },
-  { key: "classification", label: "Классификация папки" },
-  { key: "parse", label: "Распознавание названий" },
-  { key: "match", label: "Поиск в TMDB" },
-  { key: "local-ai", label: "Быстрый AI-анализ" },
-  { key: "gemini", label: "Умная AI-проверка" },
-  { key: "tv", label: "Распознавание сериалов" },
-  { key: "tv-plan", label: "План сериалов" },
-  { key: "plan", label: "Построение безопасного плана" },
-];
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleString("ru-RU");
-}
-
-function fmt(value: string | number | null | undefined): string {
-  return value === null || value === undefined || value === "" ? "—" : String(value);
-}
 
 function normalisePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -106,40 +71,12 @@ function detectPathNestingWarning(source: string, target: string): string | null
   const t = normalisePath(target);
   if (s === t) return null;
   if (t.startsWith(s + "/")) {
-    return "Папка медиатеки находится внутри папки с файлами. Для новых сессий такой вариант будет запрещён.";
+    return "РџР°РїРєР° РјРµРґРёР°С‚РµРєРё РЅР°С…РѕРґРёС‚СЃСЏ РІРЅСѓС‚СЂРё РїР°РїРєРё СЃ С„Р°Р№Р»Р°РјРё. Р”Р»СЏ РЅРѕРІС‹С… СЃРµСЃСЃРёР№ С‚Р°РєРѕР№ РІР°СЂРёР°РЅС‚ Р±СѓРґРµС‚ Р·Р°РїСЂРµС‰С‘РЅ.";
   }
   if (s.startsWith(t + "/")) {
-    return "Папка с файлами находится внутри папки медиатеки. Для новых сессий такой вариант будет запрещён.";
+    return "РџР°РїРєР° СЃ С„Р°Р№Р»Р°РјРё РЅР°С…РѕРґРёС‚СЃСЏ РІРЅСѓС‚СЂРё РїР°РїРєРё РјРµРґРёР°С‚РµРєРё. Р”Р»СЏ РЅРѕРІС‹С… СЃРµСЃСЃРёР№ С‚Р°РєРѕР№ РІР°СЂРёР°РЅС‚ Р±СѓРґРµС‚ Р·Р°РїСЂРµС‰С‘РЅ.";
   }
   return null;
-}
-
-function Badge({
-  value,
-  label,
-  tone,
-}: {
-  value: string | null | undefined;
-  label: string;
-  tone?: BadgeTone;
-}) {
-  return <span className={`status-badge ${tone ?? statusTone(value)}`}>{label}</span>;
-}
-
-function StepBadge({ status }: { status: StepStatus }) {
-  const labels: Record<StepStatus, string> = {
-    pending: "Ожидает",
-    running: "Выполняется",
-    done: "Готово",
-    error: "Ошибка",
-  };
-  const tones: Record<StepStatus, BadgeTone> = {
-    pending: "neutral",
-    running: "info",
-    done: "success",
-    error: "danger",
-  };
-  return <span className={`status-badge ${tones[status]}`}>{labels[status]}</span>;
 }
 
 function SummaryCard({ label, value }: { label: string; value: string | number }) {
@@ -152,10 +89,10 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
 }
 
 function labelContentType(value: MediaClassificationResult["content_type"] | undefined): string {
-  if (value === "movies") return "фильмы";
-  if (value === "tv") return "сериалы";
-  if (value === "mixed") return "смешанная папка";
-  return "неизвестно";
+  if (value === "movies") return "С„РёР»СЊРјС‹";
+  if (value === "tv") return "СЃРµСЂРёР°Р»С‹";
+  if (value === "mixed") return "СЃРјРµС€Р°РЅРЅР°СЏ РїР°РїРєР°";
+  return "РЅРµРёР·РІРµСЃС‚РЅРѕ";
 }
 
 function formatPreflightError(result: RecognitionPreflightResult): string {
@@ -163,77 +100,12 @@ function formatPreflightError(result: RecognitionPreflightResult): string {
     return result.message;
   }
   if (!result.local.ok) {
-    return getPreflightShortMessage(result.local) ?? "Локальная AI-модель не отвечает. Проверьте Ollama и настройки модели.";
+    return getPreflightShortMessage(result.local) ?? "Р›РѕРєР°Р»СЊРЅР°СЏ AI-РјРѕРґРµР»СЊ РЅРµ РѕС‚РІРµС‡Р°РµС‚. РџСЂРѕРІРµСЂСЊС‚Рµ Ollama Рё РЅР°СЃС‚СЂРѕР№РєРё РјРѕРґРµР»Рё.";
   }
   if (!result.cloud.ok && !result.cloud_fallback?.ok) {
-    return getPreflightShortMessage(result.cloud) ?? "Облачные модели недоступны. Проверьте ключ и настройки.";
+    return getPreflightShortMessage(result.cloud) ?? "РћР±Р»Р°С‡РЅС‹Рµ РјРѕРґРµР»Рё РЅРµРґРѕСЃС‚СѓРїРЅС‹. РџСЂРѕРІРµСЂСЊС‚Рµ РєР»СЋС‡ Рё РЅР°СЃС‚СЂРѕР№РєРё.";
   }
-  return "Проверка AI не пройдена.";
-}
-
-function PreflightCheckBlock({
-  title,
-  check,
-}: {
-  title: string;
-  check: RecognitionPreflightResult["local"] | null | undefined;
-}) {
-  const shortMessage = getPreflightShortMessage(check);
-  return (
-    <div>
-      <span>{title}</span>
-      <strong>{formatPreflightStatusLabel(check)}</strong>
-      {check?.model ? <small>{check.model}</small> : null}
-      {check?.provider ? <small>{check.provider}</small> : null}
-      {check && !check.ok ? (
-        <small>
-          Попыток: {check.attempts ?? 1} · {check.duration_ms} мс
-        </small>
-      ) : null}
-      {shortMessage ? <small className="error-text">{shortMessage}</small> : null}
-      {check?.attempted_models && check.attempted_models.length > 0 ? (
-        <ul className="chain-attempts">
-          {check.attempted_models.map((attempt, index) => (
-            <li key={`${attempt.model}-${index}`} className={attempt.ok ? "ok" : "failed"}>
-              <strong>{index + 1}.</strong> {attempt.model}
-              <span className="muted">
-                {" "}
-                {attempt.http_status ? `${attempt.http_status} · ` : ""}
-                {attempt.ok ? "успешно" : attempt.error_type ?? "ошибка"} · {attempt.duration_ms} мс
-                {attempt.attempts && attempt.attempts > 1 ? ` · ${attempt.attempts} попытки` : ""}
-              </span>
-              {!attempt.ok && attempt.human_message ? <span> — {attempt.human_message}</span> : null}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {check?.error ? (
-        <details className="technical-error">
-          <summary>Технические детали</summary>
-          <pre>{check.error}</pre>
-        </details>
-      ) : null}
-    </div>
-  );
-}
-
-function PreflightPanel({ result, status }: { result: RecognitionPreflightResult | null; status: StepStatus }) {
-  return (
-    <div className="preflight-panel">
-      <div className="section-heading">
-        <strong>Проверка AI</strong>
-        <StepBadge status={status} />
-      </div>
-      <div className="preflight-grid">
-        <PreflightCheckBlock title="Быстрый AI-анализ" check={result?.local} />
-        <PreflightCheckBlock title="Умная AI-проверка" check={result?.cloud} />
-        {result?.cloud_fallback ? (
-          <PreflightCheckBlock title="Запасная AI-модель" check={result.cloud_fallback} />
-        ) : null}
-      </div>
-      {result?.warning ? <div className="message warning">{result.warning}</div> : null}
-    </div>
-  );
+  return "РџСЂРѕРІРµСЂРєР° AI РЅРµ РїСЂРѕР№РґРµРЅР°.";
 }
 
 export function SessionDetailPage() {
@@ -251,22 +123,9 @@ export function SessionDetailPage() {
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<TmdbMatchCandidate[]>([]);
-  const [stepStatus, setStepStatus] = useState<Record<string, StepStatus>>({
-    preflight: "pending",
-    discover: "pending",
-    classification: "pending",
-    parse: "pending",
-    "local-ai": "pending",
-    match: "pending",
-    gemini: "pending",
-    tv: "pending",
-    "tv-plan": "pending",
-    plan: "pending",
-  });
-
-  const [loading, setLoading] = useState(true);
+  const { stepStatus, setStepStatus } = useSessionPipeline();
+  const { loading, setLoading, error, setError } = useSessionData();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
@@ -298,7 +157,7 @@ export function SessionDetailPage() {
       () => listApplyRuns(planId),
       setApplyRuns,
       setApplyRunsError,
-      "Не удалось загрузить журнал применения",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ Р¶СѓСЂРЅР°Р» РїСЂРёРјРµРЅРµРЅРёСЏ",
     );
   }, []);
 
@@ -307,7 +166,7 @@ export function SessionDetailPage() {
       () => listPlans(numId),
       setPlans,
       setPlanError,
-      "Не удалось загрузить план операций",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РїР»Р°РЅ РѕРїРµСЂР°С†РёР№",
     );
     const planId = selectedPlanId ?? loadedPlans?.[0]?.id ?? null;
     if (planId !== null) {
@@ -316,7 +175,7 @@ export function SessionDetailPage() {
         () => listPlanOperations(planId),
         setOperations,
         setPlanError,
-        "Не удалось загрузить операции плана",
+        "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РѕРїРµСЂР°С†РёРё РїР»Р°РЅР°",
       );
       if (ops !== null) {
         await loadApplyRuns(planId);
@@ -333,25 +192,25 @@ export function SessionDetailPage() {
       () => listFiles(numId),
       setFiles,
       setReviewError,
-      "Не удалось загрузить список файлов",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє С„Р°Р№Р»РѕРІ",
     );
     await loadSection(
       () => classifySession(numId),
       setClassification,
       setReviewError,
-      "Не удалось классифицировать содержимое папки",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ РєР»Р°СЃСЃРёС„РёС†РёСЂРѕРІР°С‚СЊ СЃРѕРґРµСЂР¶РёРјРѕРµ РїР°РїРєРё",
     );
     const loadedItems = await loadSection(
       () => listItems(numId),
       setItems,
       setReviewError,
-      "Не удалось загрузить список фильмов",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє С„РёР»СЊРјРѕРІ",
     );
     const loadedTvShows = await loadSection(
       () => listTvShows(numId),
       setTvShows,
       setReviewError,
-      "Не удалось загрузить список сериалов",
+      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє СЃРµСЂРёР°Р»РѕРІ",
     );
     return loadedFiles !== null && loadedItems !== null && loadedTvShows !== null;
   }, [numId]);
@@ -363,7 +222,7 @@ export function SessionDetailPage() {
       setSessionError(null);
       return loadedSession;
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Не удалось загрузить сессию";
+      const message = err instanceof ApiError ? err.message : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРµСЃСЃРёСЋ";
       setSessionError(message);
       if (err instanceof ApiError && err.status === 404) {
         setError(message);
@@ -479,7 +338,7 @@ export function SessionDetailPage() {
       setInfo(msg);
       await loadAll();
     } catch (err) {
-      const raw = err instanceof ApiError ? err.message : `Ошибка: ${key}`;
+      const raw = err instanceof ApiError ? err.message : `РћС€РёР±РєР°: ${key}`;
       setError(formatTmdbError(raw));
     } finally {
       setActionLoading(null);
@@ -526,7 +385,7 @@ export function SessionDetailPage() {
       const classificationResult = await runStep("classification", () => classifySession(numId));
       const contentType = classificationResult.content_type;
       if (classificationResult.needs_user_decision) {
-        throw new ApiError(400, "Тип содержимого не определён уверенно. Выберите режим обработки вручную.");
+        throw new ApiError(400, "РўРёРї СЃРѕРґРµСЂР¶РёРјРѕРіРѕ РЅРµ РѕРїСЂРµРґРµР»С‘РЅ СѓРІРµСЂРµРЅРЅРѕ. Р’С‹Р±РµСЂРёС‚Рµ СЂРµР¶РёРј РѕР±СЂР°Р±РѕС‚РєРё РІСЂСѓС‡РЅСѓСЋ.");
       }
 
       if (contentType === "movies" || contentType === "mixed") {
@@ -565,12 +424,12 @@ export function SessionDetailPage() {
         setStepStatus({ ...nextStatus });
       }
       setAnalysisCollapsed(true);
-      setInfo("Анализ завершён. Проверьте найденные объекты и безопасный план.");
+      setInfo("РђРЅР°Р»РёР· Р·Р°РІРµСЂС€С‘РЅ. РџСЂРѕРІРµСЂСЊС‚Рµ РЅР°Р№РґРµРЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ Рё Р±РµР·РѕРїР°СЃРЅС‹Р№ РїР»Р°РЅ.");
     } catch (err) {
       const failed = Object.entries(nextStatus).find(([, status]) => status === "running")?.[0];
       if (failed) nextStatus[failed] = "error";
       setStepStatus({ ...nextStatus });
-      const raw = err instanceof ApiError ? err.message : "Анализ остановлен из-за ошибки.";
+      const raw = err instanceof ApiError ? err.message : "РђРЅР°Р»РёР· РѕСЃС‚Р°РЅРѕРІР»РµРЅ РёР·-Р·Р° РѕС€РёР±РєРё.";
       setError(formatTmdbError(raw));
     } finally {
       setActionLoading(null);
@@ -586,7 +445,7 @@ export function SessionDetailPage() {
       const loaded = await listTmdbCandidates(itemId);
       setCandidates([...loaded].sort((a, b) => b.id - a.id));
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "Не удалось загрузить кандидатов TMDB";
+      const msg = err instanceof ApiError ? err.message : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєР°РЅРґРёРґР°С‚РѕРІ TMDB";
       setReviewError(msg);
       setCandidates([]);
     }
@@ -607,7 +466,7 @@ export function SessionDetailPage() {
         setCandidates(await listTmdbCandidates(selectedItemId));
         setItems(await listItems(numId));
       },
-      "Кандидат выбран. Теперь можно пересобрать план.",
+      "РљР°РЅРґРёРґР°С‚ РІС‹Р±СЂР°РЅ. РўРµРїРµСЂСЊ РјРѕР¶РЅРѕ РїРµСЂРµСЃРѕР±СЂР°С‚СЊ РїР»Р°РЅ.",
     );
   }
 
@@ -638,8 +497,8 @@ export function SessionDetailPage() {
     await runAction("bulk-approve-all", async () => {
       const result = await approveAllMatched(numId, { scope: "matched" });
       setBulkResult(result);
-      setInfo(`Одобрено: ${result.approved_count} · пропущено: ${result.skipped_count}`);
-    }, "Массовое одобрение завершено.");
+      setInfo(`РћРґРѕР±СЂРµРЅРѕ: ${result.approved_count} В· РїСЂРѕРїСѓС‰РµРЅРѕ: ${result.skipped_count}`);
+    }, "РњР°СЃСЃРѕРІРѕРµ РѕРґРѕР±СЂРµРЅРёРµ Р·Р°РІРµСЂС€РµРЅРѕ.");
   }
 
   async function handleBulkApproveSelected() {
@@ -648,18 +507,18 @@ export function SessionDetailPage() {
     await runAction("bulk-approve-selected", async () => {
       const result = await approveAllMatched(numId, { scope: "selected", item_ids: ids });
       setBulkResult(result);
-      setInfo(`Одобрено: ${result.approved_count} · пропущено: ${result.skipped_count}`);
-    }, "Выбранные объекты одобрены.");
+      setInfo(`РћРґРѕР±СЂРµРЅРѕ: ${result.approved_count} В· РїСЂРѕРїСѓС‰РµРЅРѕ: ${result.skipped_count}`);
+    }, "Р’С‹Р±СЂР°РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ РѕРґРѕР±СЂРµРЅС‹.");
   }
 
   async function handleBulkDecision(decision: "ignored" | "deferred") {
     const ids = [...selectedItemIds];
     if (ids.length === 0) return;
-    const note = decision === "ignored" ? "Не добавлять" : "Отложено";
+    const note = decision === "ignored" ? "РќРµ РґРѕР±Р°РІР»СЏС‚СЊ" : "РћС‚Р»РѕР¶РµРЅРѕ";
     await runAction(`bulk-${decision}`, async () => {
       const result = await bulkReviewDecision(numId, { item_ids: ids, decision, note });
       setBulkResult(result);
-    }, decision === "ignored" ? "Выбранные объекты исключены." : "Выбранные объекты отложены.");
+    }, decision === "ignored" ? "Р’С‹Р±СЂР°РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ РёСЃРєР»СЋС‡РµРЅС‹." : "Р’С‹Р±СЂР°РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ РѕС‚Р»РѕР¶РµРЅС‹.");
   }
 
   async function handleValidatePlan() {
@@ -670,9 +529,9 @@ export function SessionDetailPage() {
       setValidationResult(result);
       setOperations(result.operations);
       setInfo(
-        `Проверка: OK ${result.ok_count}, предупреждения ${result.warning_count}, конфликты ${result.conflict_count}`,
+        `РџСЂРѕРІРµСЂРєР°: OK ${result.ok_count}, РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ ${result.warning_count}, РєРѕРЅС„Р»РёРєС‚С‹ ${result.conflict_count}`,
       );
-    }, "План проверен.");
+    }, "РџР»Р°РЅ РїСЂРѕРІРµСЂРµРЅ.");
   }
 
   async function handleApplyPlan() {
@@ -682,11 +541,11 @@ export function SessionDetailPage() {
     await runAction("apply-plan", async () => {
       const result = await applyPlan(planId, { confirm: true });
       setApplyResult(result);
-      setInfo(`Запущено применение ${result.total_operations} операций.`);
+      setInfo(`Р—Р°РїСѓС‰РµРЅРѕ РїСЂРёРјРµРЅРµРЅРёРµ ${result.total_operations} РѕРїРµСЂР°С†РёР№.`);
       setOperations(await listPlanOperations(planId));
       setPlans(await listPlans(numId));
       await loadApplyRuns(planId);
-    }, "План запущен.");
+    }, "РџР»Р°РЅ Р·Р°РїСѓС‰РµРЅ.");
   }
 
   async function handleRollbackPlan() {
@@ -696,11 +555,11 @@ export function SessionDetailPage() {
     await runAction("rollback-plan", async () => {
       const result = await rollbackPlan(planId, { confirm: true });
       setApplyResult(null);
-      setInfo(`Откачено ${result.rolled_back_operations} из ${result.total_operations} операций.`);
+      setInfo(`РћС‚РєР°С‡РµРЅРѕ ${result.rolled_back_operations} РёР· ${result.total_operations} РѕРїРµСЂР°С†РёР№.`);
       setOperations(await listPlanOperations(planId));
       setPlans(await listPlans(numId));
       await loadApplyRuns(planId);
-    }, "План откачен.");
+    }, "РџР»Р°РЅ РѕС‚РєР°С‡РµРЅ.");
   }
 
   function toggleItemSelection(itemId: number) {
@@ -713,7 +572,7 @@ export function SessionDetailPage() {
   }
 
   if (!Number.isFinite(numId)) {
-    return <div className="message error">Неверный ID сессии.</div>;
+    return <div className="message error">РќРµРІРµСЂРЅС‹Р№ ID СЃРµСЃСЃРёРё.</div>;
   }
 
   const busy = actionLoading !== null;
@@ -768,145 +627,74 @@ export function SessionDetailPage() {
       {error ? <div className="message error">{error}</div> : null}
       {info ? <div className="message success">{info}</div> : null}
       <div className="safety-notice">
-        План — предварительный просмотр. Файлы изменятся только после явного подтверждения «Применить план».
+        РџР»Р°РЅ вЂ” РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅС‹Р№ РїСЂРѕСЃРјРѕС‚СЂ. Р¤Р°Р№Р»С‹ РёР·РјРµРЅСЏС‚СЃСЏ С‚РѕР»СЊРєРѕ РїРѕСЃР»Рµ СЏРІРЅРѕРіРѕ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ В«РџСЂРёРјРµРЅРёС‚СЊ РїР»Р°РЅВ».
       </div>
 
-      <section className="panel">
-        <div className="session-header-row">
-          <Link to="/">← Назад</Link>
-          {session ? (
-            <div className="session-header-actions">
-              <Badge value={session.status} label={labelScanSessionStatus(session.status)} />
-              <button
-                type="button"
-                className="btn-danger"
-                disabled={busy}
-                onClick={() => void handleDeleteSession()}
-              >
-                {actionLoading === "delete" ? t.common.loading : t.detail.deleteSessionButton}
-              </button>
-            </div>
-          ) : null}
-        </div>
-        <div className="section-heading">
-          <div>
-            <h2>Сессия #{numId}</h2>
-            {session ? (
-              <p className="muted">
-                {session.source_path} → {session.target_path}
-              </p>
-            ) : null}
-          </div>
-        </div>
-        {loading && !session ? <p className="muted">Загрузка...</p> : null}
-        {sessionError && !error ? <div className="message error">{sessionError}</div> : null}
-        {nestingWarning ? <div className="message warning">{nestingWarning}</div> : null}
-        {session?.error_message ? <div className="message error">{session.error_message}</div> : null}
-      </section>
-
-      <section className="panel analysis-panel">
-        <div className="section-heading">
-          <div>
-            <h3>Анализ медиатеки</h3>
-            {analysisCollapsed && preflightResult?.ok ? (
-              <p className="muted compact-preflight-status">
-                AI проверен
-                {preflightResult.local.ok ? ": локальная модель работает" : ": локальная модель недоступна"}
-                {preflightResult.cloud.ok ? ", основная облачная работает" : ", основная облачная недоступна"}
-                {preflightResult.cloud_fallback?.ok ? ", использована запасная" : ""}
-              </p>
-            ) : (
-              <p className="muted">
-                MediaForge просканирует папку, распознает имена файлов, найдёт совпадения в TMDB и построит план.
-              </p>
-            )}
-          </div>
-          <button className="btn-primary analysis-button" disabled={busy} onClick={() => void runFullAnalysis()}>
-            {actionLoading === "analysis" ? "Анализ выполняется..." : "Начать анализ"}
-          </button>
-        </div>
-        {preflightResult?.warning ? <div className="message warning compact-ai-warning">{preflightResult.warning}</div> : null}
-        <details className="analysis-details" open={!analysisCollapsed}>
-          <summary>Статус pipeline и проверка AI</summary>
-          <PreflightPanel result={preflightResult} status={stepStatus.preflight ?? "pending"} />
-          <div className="analysis-steps compact-analysis-steps">
-            {analysisSteps.map((step) => (
-              <span key={step.key} className="analysis-step-chip">
-                {step.label} <StepBadge status={stepStatus[step.key] ?? "pending"} />
-              </span>
-            ))}
-          </div>
-        </details>
-        <details className="manual-mode">
-          <summary>Ручной режим</summary>
-          <div className="pipeline-actions">
-            <button disabled={busy} onClick={() => void runAction("discover", () => discoverSession(numId), "Сканирование завершено.")}>
-              Сканировать
-            </button>
-            <button disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "Распознавание завершено.")}>
-              Распознать
-            </button>
-            <button disabled={busy} onClick={() => void runAction("local-ai", () => normalizeLocalAi(numId), "Локальная AI-модель завершила нормализацию.")}>
-              Локальная AI-модель
-            </button>
-            <button disabled={busy} onClick={() => void runAction("match", () => matchTmdbSession(numId), "Поиск TMDB завершён.")}>
-              Найти в TMDB
-            </button>
-            <button disabled={busy} onClick={() => void runAction("gemini", async () => {
-              await resolveWithGemini(numId);
-              await matchTmdbSession(numId, true);
-            }, "Запасная облачная модель и повторный поиск в TMDB завершены.")}>
-              Запасная модель + TMDB
-            </button>
-            <button disabled={busy} onClick={() => void runAction("tv", () => analyzeTvSession(numId, true), "Распознавание сериалов завершено.")}>
-              Распознать сериалы
-            </button>
-            <button disabled={busy} onClick={() => void runAction("tv-plan", () => createTvPlan(numId, true), "План сериалов построен.")}>
-              Построить план сериалов
-            </button>
-            <button disabled={busy} onClick={() => void runAction("plan", () => createPlan(numId), "План построен.")}>
-              Построить план
-            </button>
-          </div>
-        </details>
-      </section>
-
+      <SessionHeader
+        session={session}
+        sessionId={numId}
+        busy={busy}
+        actionLoading={actionLoading}
+        loading={loading}
+        sessionError={sessionError && !error ? sessionError : null}
+        nestingWarning={nestingWarning}
+        onDelete={() => void handleDeleteSession()}
+      />
+      <PipelinePanel
+        busy={busy}
+        actionLoading={actionLoading}
+        analysisCollapsed={analysisCollapsed}
+        preflightResult={preflightResult}
+        stepStatus={stepStatus}
+        onRunFullAnalysis={() => void runFullAnalysis()}
+        onDiscover={() => void runAction("discover", () => discoverSession(numId), "Сканирование завершено.")}
+        onParse={() => void runAction("parse", () => parseSession(numId), "Распознавание завершено.")}
+        onLocalAi={() => void runAction("local-ai", () => normalizeLocalAi(numId), "Локальная AI-модель завершила нормализацию.")}
+        onMatch={() => void runAction("match", () => matchTmdbSession(numId), "Поиск TMDB завершён.")}
+        onGemini={() => void runAction("gemini", async () => {
+          await resolveWithGemini(numId);
+          await matchTmdbSession(numId, true);
+        }, "Запасная облачная модель и повторный поиск в TMDB завершены.")}
+        onTv={() => void runAction("tv", () => analyzeTvSession(numId, true), "Распознавание сериалов завершено.")}
+        onTvPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "План сериалов построен.")}
+        onPlan={() => void runAction("plan", () => createPlan(numId), "План построен.")}
+      />
       <section className="summary-dashboard">
-        <SummaryCard label="Всего файлов" value={summary.totalFiles} />
-        <SummaryCard label="Видео" value={summary.video} />
-        <SummaryCard label="Новых" value={summary.fresh} />
-        <SummaryCard label="Уже обработано" value={summary.reused} />
-        <SummaryCard label="Найдено" value={summary.matched} />
-        <SummaryCard label="Требуют проверки" value={summary.review} />
-        <SummaryCard label="Исключено" value={summary.ignored} />
-        <SummaryCard label="Отложено" value={summary.deferred} />
-        <SummaryCard label="Операций в плане" value={summary.operations} />
-        <SummaryCard label="Конфликтов" value={summary.conflicts} />
+        <SummaryCard label="Р’СЃРµРіРѕ С„Р°Р№Р»РѕРІ" value={summary.totalFiles} />
+        <SummaryCard label="Р’РёРґРµРѕ" value={summary.video} />
+        <SummaryCard label="РќРѕРІС‹С…" value={summary.fresh} />
+        <SummaryCard label="РЈР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅРѕ" value={summary.reused} />
+        <SummaryCard label="РќР°Р№РґРµРЅРѕ" value={summary.matched} />
+        <SummaryCard label="РўСЂРµР±СѓСЋС‚ РїСЂРѕРІРµСЂРєРё" value={summary.review} />
+        <SummaryCard label="РСЃРєР»СЋС‡РµРЅРѕ" value={summary.ignored} />
+        <SummaryCard label="РћС‚Р»РѕР¶РµРЅРѕ" value={summary.deferred} />
+        <SummaryCard label="РћРїРµСЂР°С†РёР№ РІ РїР»Р°РЅРµ" value={summary.operations} />
+        <SummaryCard label="РљРѕРЅС„Р»РёРєС‚РѕРІ" value={summary.conflicts} />
       </section>
 
       {classification ? (
         <section className="panel compact-review-section">
           <div className="section-heading">
-            <h3>Тип содержимого: {labelContentType(classification.content_type)}</h3>
-            <span className="muted">уверенность {Math.round(classification.confidence * 100)}%</span>
+            <h3>РўРёРї СЃРѕРґРµСЂР¶РёРјРѕРіРѕ: {labelContentType(classification.content_type)}</h3>
+            <span className="muted">СѓРІРµСЂРµРЅРЅРѕСЃС‚СЊ {Math.round(classification.confidence * 100)}%</span>
           </div>
           <p className="muted">{classification.reason}</p>
           {classification.content_type === "tv" || classification.content_type === "mixed" ? (
             <p className="muted">
-              Сериалов: {tvShows.length} · Сезонов: {tvSeasonCount} · Эпизодов: {tvEpisodeCount}
+              РЎРµСЂРёР°Р»РѕРІ: {tvShows.length} В· РЎРµР·РѕРЅРѕРІ: {tvSeasonCount} В· Р­РїРёР·РѕРґРѕРІ: {tvEpisodeCount}
             </p>
           ) : null}
           <p className="muted">
-            Видео: {classification.video_files} · Вложенных папок: {classification.nested_folder_count} · TV-признаков: {classification.tv_like_files} · Фильм-признаков: {classification.movie_like_files}
+            Р’РёРґРµРѕ: {classification.video_files} В· Р’Р»РѕР¶РµРЅРЅС‹С… РїР°РїРѕРє: {classification.nested_folder_count} В· TV-РїСЂРёР·РЅР°РєРѕРІ: {classification.tv_like_files} В· Р¤РёР»СЊРј-РїСЂРёР·РЅР°РєРѕРІ: {classification.movie_like_files}
           </p>
           {classification.known_extensions.length > 0 ? (
             <p className="muted">
-              Видео-расширения: {classification.known_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
+              Р’РёРґРµРѕ-СЂР°СЃС€РёСЂРµРЅРёСЏ: {classification.known_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
             </p>
           ) : null}
           {classification.ignored_extensions.length > 0 ? (
             <p className="muted">
-              Игнорируются: {classification.ignored_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
+              РРіРЅРѕСЂРёСЂСѓСЋС‚СЃСЏ: {classification.ignored_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
             </p>
           ) : null}
           {classification.warnings.map((warning) => (
@@ -914,25 +702,25 @@ export function SessionDetailPage() {
           ))}
           {classification.needs_user_decision ? (
             <div className="manual-review-actions">
-              <button type="button" disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "Папка будет обработана как фильмы.")}>Фильмы</button>
-              <button type="button" disabled={busy} onClick={() => void runAction("tv", () => analyzeTvSession(numId, true), "Папка будет обработана как сериалы.")}>Сериалы</button>
+              <button type="button" disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "РџР°РїРєР° Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РєР°Рє С„РёР»СЊРјС‹.")}>Р¤РёР»СЊРјС‹</button>
+              <button type="button" disabled={busy} onClick={() => void runAction("tv", () => analyzeTvSession(numId, true), "РџР°РїРєР° Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РєР°Рє СЃРµСЂРёР°Р»С‹.")}>РЎРµСЂРёР°Р»С‹</button>
               <button type="button" disabled={busy} onClick={() => void runAction("mixed", async () => {
                 await parseSession(numId);
                 await analyzeTvSession(numId, true);
-              }, "Папка будет обработана как смешанная.")}>Смешанная папка</button>
+              }, "РџР°РїРєР° Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РєР°Рє СЃРјРµС€Р°РЅРЅР°СЏ.")}>РЎРјРµС€Р°РЅРЅР°СЏ РїР°РїРєР°</button>
             </div>
           ) : null}
         </section>
       ) : null}
 
       {isTvOnlySession ? (
-        <p className="muted compact-section-row">Фильмы: не обнаружены</p>
+        <p className="muted compact-section-row">Р¤РёР»СЊРјС‹: РЅРµ РѕР±РЅР°СЂСѓР¶РµРЅС‹</p>
       ) : (
       <section className="panel review-main-panel">
         <div className="section-heading">
-          <h3>Проверка найденных фильмов</h3>
+          <h3>РџСЂРѕРІРµСЂРєР° РЅР°Р№РґРµРЅРЅС‹С… С„РёР»СЊРјРѕРІ</h3>
           <span className="muted">
-            В план: {planExcluded.plannable} · исключено: {planExcluded.ignored} · отложено: {planExcluded.deferred}
+            Р’ РїР»Р°РЅ: {planExcluded.plannable} В· РёСЃРєР»СЋС‡РµРЅРѕ: {planExcluded.ignored} В· РѕС‚Р»РѕР¶РµРЅРѕ: {planExcluded.deferred}
           </span>
         </div>
         {reviewError ? <div className="message error">{reviewError}</div> : null}
@@ -948,7 +736,7 @@ export function SessionDetailPage() {
           onIgnoreSelected={() => void handleBulkDecision("ignored")}
           onDeferSelected={() => void handleBulkDecision("deferred")}
           onClearSelection={() => setSelectedItemIds(new Set())}
-          onRebuildPlan={() => void runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
+          onRebuildPlan={() => void runAction("rebuild-plan", () => createPlan(numId, true), "РџР»Р°РЅ РїРµСЂРµСЃРѕР±СЂР°РЅ.")}
         />
         <ItemList
           variant="matched"
@@ -977,26 +765,26 @@ export function SessionDetailPage() {
         planStale={planStale}
         onDecision={async (showId, decision) => {
           const messages: Record<string, string> = {
-            approved: "Сериал включён в план. Пересоберите план сериалов.",
-            ignored: "Сериал исключён из плана. Пересоберите план сериалов, чтобы обновить операции.",
-            deferred: "Сериал отложен и не попадёт в текущий план.",
-            manual_override: "Совпадение изменено. Пересоберите план сериалов.",
+            approved: "РЎРµСЂРёР°Р» РІРєР»СЋС‡С‘РЅ РІ РїР»Р°РЅ. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ.",
+            ignored: "РЎРµСЂРёР°Р» РёСЃРєР»СЋС‡С‘РЅ РёР· РїР»Р°РЅР°. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ, С‡С‚РѕР±С‹ РѕР±РЅРѕРІРёС‚СЊ РѕРїРµСЂР°С†РёРё.",
+            deferred: "РЎРµСЂРёР°Р» РѕС‚Р»РѕР¶РµРЅ Рё РЅРµ РїРѕРїР°РґС‘С‚ РІ С‚РµРєСѓС‰РёР№ РїР»Р°РЅ.",
+            manual_override: "РЎРѕРІРїР°РґРµРЅРёРµ РёР·РјРµРЅРµРЅРѕ. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ.",
           };
           await runAction(`tv-${decision}-${showId}`, async () => {
             await applyTvReviewDecision(showId, { decision });
-          }, messages[decision] ?? "Решение по сериалу сохранено.");
+          }, messages[decision] ?? "Р РµС€РµРЅРёРµ РїРѕ СЃРµСЂРёР°Р»Сѓ СЃРѕС…СЂР°РЅРµРЅРѕ.");
         }}
         onShowUpdated={async (message) => {
           setInfo(message);
           await loadAll();
         }}
-        onRebuildPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "План сериалов пересобран.")}
+        onRebuildPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "РџР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ РїРµСЂРµСЃРѕР±СЂР°РЅ.")}
       />
 
       {reviewItems.length > 0 ? (
         <section className="panel compact-review-section">
           <div className="section-heading">
-            <h3>Требуют проверки</h3>
+            <h3>РўСЂРµР±СѓСЋС‚ РїСЂРѕРІРµСЂРєРё</h3>
             <span className="muted">{reviewItems.length}</span>
           </div>
           <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
@@ -1009,13 +797,13 @@ export function SessionDetailPage() {
           }} />
         </section>
       ) : (
-        <p className="muted compact-section-row">Требуют проверки: 0</p>
+        <p className="muted compact-section-row">РўСЂРµР±СѓСЋС‚ РїСЂРѕРІРµСЂРєРё: 0</p>
       )}
 
       {unmatchedItems.length > 0 ? (
         <section className="panel compact-review-section">
           <div className="section-heading">
-            <h3>Не найдено</h3>
+            <h3>РќРµ РЅР°Р№РґРµРЅРѕ</h3>
             <span className="muted">{unmatchedItems.length}</span>
           </div>
           <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
@@ -1028,12 +816,12 @@ export function SessionDetailPage() {
           }} />
         </section>
       ) : (
-        <p className="muted compact-section-row">Не найдено: 0</p>
+        <p className="muted compact-section-row">РќРµ РЅР°Р№РґРµРЅРѕ: 0</p>
       )}
 
       {otherItems.length > 0 ? (
         <section className="panel">
-          <h3>Другие объекты</h3>
+          <h3>Р”СЂСѓРіРёРµ РѕР±СЉРµРєС‚С‹</h3>
           <ItemList variant="review" items={otherItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
           await applyReviewDecision(itemId, payload);
           await loadAll();
@@ -1101,7 +889,7 @@ export function SessionDetailPage() {
       />
 
       <details className="panel">
-        <summary>Технические детали</summary>
+        <summary>РўРµС…РЅРёС‡РµСЃРєРёРµ РґРµС‚Р°Р»Рё</summary>
         <TechnicalTables
           files={files}
           items={items}
@@ -1116,600 +904,7 @@ export function SessionDetailPage() {
 }
 
 
-type CorrectionPayload = {
-  corrected_title: string;
-  corrected_year?: number | null;
-  corrected_media_type?: string | null;
-  removed_tokens?: string[];
-  confidence?: number | null;
-};
 
-type ReviewPayload = {
-  decision: string;
-  note?: string | null;
-  manual_title?: string | null;
-  manual_year?: number | null;
-  manual_tmdb_id?: number | null;
-  manual_imdb_id?: string | null;
-  manual_tvdb_id?: number | null;
-  manual_media_type?: string | null;
-};
 
-function fileNameFromPath(path?: string | null): string {
-  if (!path) return "—";
-  return path.split(/[\\/]/).pop() || path;
-}
 
-function TvReviewSection({
-  shows,
-  busy,
-  planStale,
-  onDecision,
-  onShowUpdated,
-  onRebuildPlan,
-}: {
-  shows: TvShow[];
-  busy: boolean;
-  planStale: boolean;
-  onDecision: (showId: number, decision: string) => Promise<void>;
-  onShowUpdated: (message: string) => Promise<void>;
-  onRebuildPlan: () => void;
-}) {
-  const [manualShowId, setManualShowId] = useState<number | null>(null);
-  const episodeCount = shows.reduce(
-    (total, show) => total + show.seasons.reduce((seasonTotal, season) => seasonTotal + season.episodes.length, 0),
-    0,
-  );
-  const needsReview = shows.filter((show) => show.needs_review || show.seasons.some((season) => season.episodes.some((episode) => episode.needs_review))).length;
-  const includedCount = shows.filter((show) => tvShowReviewState(show) === "included" || tvShowReviewState(show) === "manual_override").length;
-  const ignoredCount = shows.filter((show) => tvShowReviewState(show) === "ignored").length;
-  const deferredCount = shows.filter((show) => tvShowReviewState(show) === "deferred").length;
 
-  if (shows.length === 0) {
-    return <p className="muted compact-section-row">Сериалы: не обнаружены</p>;
-  }
-
-  return (
-    <section className="panel compact-review-section tv-review-section">
-      <div className="section-heading">
-        <h3>Проверка сериалов</h3>
-        <span className="muted">
-          В план: {includedCount} · Эпизодов: {episodeCount} · Требуют проверки: {needsReview} · исключено: {ignoredCount} · отложено: {deferredCount}
-        </span>
-      </div>
-      {planStale ? (
-        <p className="message warning">Решения по сериалам изменились. Пересоберите план сериалов.</p>
-      ) : null}
-      <div className="review-item-list">
-        {shows.map((show) => {
-          const state = tvShowReviewState(show);
-          const status = tvShowStatusParts(show);
-          return (
-            <article className="compact-media-row tv-show-row" key={show.id}>
-              {show.poster_url ? <img className="poster-thumb" src={show.poster_url} alt="" /> : <div className="poster-thumb placeholder" />}
-              <div className="compact-media-main">
-                <div className="compact-media-title-row">
-                  <strong>{state === "needs_review" ? "Возможное совпадение: " : ""}{show.title}{show.year ? ` (${show.year})` : ""}</strong>
-                  <span className="tv-status-badges">
-                    {status.map((part) => (
-                      <span key={part.label} className={`status-badge ${part.tone}`}>{part.label}</span>
-                    ))}
-                  </span>
-                </div>
-                <p className="muted">
-                  Сериал · {show.tmdb_id ? `TMDB ${show.tmdb_id}` : "TMDB не выбран"}
-                  {show.tvdb_id ? ` · TVDB ${show.tvdb_id}` : ""}
-                  {show.imdb_id ? ` · IMDb ${show.imdb_id}` : ""}
-                  {show.match_source ? ` · ${show.match_source}` : ""}
-                </p>
-                <p className="muted">
-                  Сезонов: {show.seasons.length} · Эпизодов:{" "}
-                  {show.seasons.reduce((total, season) => total + season.episodes.length, 0)}
-                </p>
-                {show.overview ? <p className="compact-overview">{show.overview}</p> : null}
-                {state === "needs_review" && show.ai_reasoning_summary ? (
-                  <p className="message warning">Причина: {show.ai_reasoning_summary}</p>
-                ) : null}
-                {show.warnings?.length ? <p className="message warning">{show.warnings.join("; ")}</p> : null}
-                <TvShowActions
-                  show={show}
-                  state={state}
-                  busy={busy}
-                  manualOpen={manualShowId === show.id}
-                  onToggleManual={() => setManualShowId((current) => (current === show.id ? null : show.id))}
-                  onDecision={onDecision}
-                />
-                {manualShowId === show.id ? (
-                  <TvManualMatchPanel
-                    show={show}
-                    busy={busy}
-                    onUpdated={async () => {
-                      setManualShowId(null);
-                      await onShowUpdated("Совпадение изменено. Пересоберите план сериалов.");
-                    }}
-                  />
-                ) : null}
-                <div className="tv-season-list">
-                  {show.seasons.map((season, seasonIndex) => (
-                    <details key={season.id} open={show.seasons.length <= 2 || seasonIndex === 0} className="tv-season-details">
-                      <summary>
-                        Сезон {season.season_number} — {season.episodes.length} серий
-                      </summary>
-                      <div className="tv-episode-list">
-                        {season.episodes.map((episode) => (
-                          <div className="tv-episode-row" key={episode.id}>
-                            <span>S{String(episode.season_number).padStart(2, "0")}E{String(episode.episode_number).padStart(2, "0")}</span>
-                            <span className="path-text" title={episode.source_path ?? undefined}>{fileNameFromPath(episode.source_path)}</span>
-                            <span>{episode.title ?? "Название будет уточнено"}</span>
-                            {episode.issue || episode.warning ? <span className="status-badge warning">{episode.issue ?? episode.warning}</span> : null}
-                            {episode.source_path ? (
-                              <details className="tv-episode-path">
-                                <summary>Путь</summary>
-                                <code>{episode.source_path}</code>
-                              </details>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    </details>
-                  ))}
-                </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      <div className="pipeline-actions">
-        <button type="button" disabled={busy || needsReview > 0} onClick={onRebuildPlan}>
-          Пересобрать план сериалов
-        </button>
-      </div>
-    </section>
-  );
-}
-
-type TvReviewState = "included" | "needs_review" | "ignored" | "deferred" | "manual_override";
-
-function tvShowReviewState(show: TvShow): TvReviewState {
-  if (show.review_decision === "ignored") return "ignored";
-  if (show.review_decision === "deferred") return "deferred";
-  if (show.review_decision === "manual_override") return "manual_override";
-  if (show.needs_review || show.seasons.some((season) => season.episodes.some((episode) => episode.needs_review))) return "needs_review";
-  return "included";
-}
-
-function tvShowStatusParts(show: TvShow): { label: string; tone: BadgeTone }[] {
-  const state = tvShowReviewState(show);
-  if (state === "manual_override") return [{ label: "Выбрано вручную", tone: "info" }, { label: "Включён в план", tone: "success" }];
-  if (state === "included") return [{ label: "Включён в план", tone: "success" }];
-  if (state === "needs_review") return [{ label: "Требует проверки", tone: "warning" }];
-  if (state === "ignored") return [{ label: "Исключён из плана", tone: "neutral" }];
-  return [{ label: "Отложен", tone: "warning" }];
-}
-
-function TvShowActions({
-  show,
-  state,
-  busy,
-  manualOpen,
-  onToggleManual,
-  onDecision,
-}: {
-  show: TvShow;
-  state: TvReviewState;
-  busy: boolean;
-  manualOpen: boolean;
-  onToggleManual: () => void;
-  onDecision: (showId: number, decision: string) => Promise<void>;
-}) {
-  if (state === "needs_review") {
-    return (
-      <div className="manual-review-actions">
-        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "approved")}>Подтвердить</button>
-        <button type="button" disabled={busy} onClick={onToggleManual}>{manualOpen ? "Скрыть замену" : "Изменить совпадение"}</button>
-        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "ignored")}>Не добавлять</button>
-        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "deferred")}>Отложить</button>
-      </div>
-    );
-  }
-  if (state === "ignored" || state === "deferred") {
-    return (
-      <div className="manual-review-actions">
-        <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "approved")}>Вернуть в план</button>
-        <button type="button" disabled={busy} onClick={onToggleManual}>{manualOpen ? "Скрыть замену" : "Изменить совпадение"}</button>
-      </div>
-    );
-  }
-  return (
-    <div className="manual-review-actions">
-      <button type="button" disabled={busy} onClick={onToggleManual}>{manualOpen ? "Скрыть замену" : "Изменить совпадение"}</button>
-      <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "ignored")}>Исключить из плана</button>
-      <button type="button" disabled={busy} onClick={() => void onDecision(show.id, "deferred")}>Отложить</button>
-    </div>
-  );
-}
-
-function TvManualMatchPanel({
-  show,
-  busy,
-  onUpdated,
-}: {
-  show: TvShow;
-  busy: boolean;
-  onUpdated: () => Promise<void>;
-}) {
-  const [query, setQuery] = useState(show.title);
-  const [year, setYear] = useState(String(show.year ?? ""));
-  const [tmdbId, setTmdbId] = useState(String(show.tmdb_id ?? ""));
-  const [imdbId, setImdbId] = useState(show.imdb_id ?? "");
-  const [tvdbId, setTvdbId] = useState(String(show.tvdb_id ?? ""));
-  const [candidates, setCandidates] = useState<TmdbSearchResult[]>([]);
-  const [localBusy, setLocalBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const disabled = busy || localBusy;
-
-  async function runManualAction(action: () => Promise<void>) {
-    setLocalBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      await action();
-    } catch (err) {
-      setError(err instanceof ApiError ? formatTmdbError(err.message) : "Операция не удалась.");
-    } finally {
-      setLocalBusy(false);
-    }
-  }
-
-  async function selectByIds(payload: { tmdb_id?: number | null; imdb_id?: string | null; tvdb_id?: number | null }) {
-    await manualTvTmdbLookup(show.id, { ...payload, select: true });
-    await onUpdated();
-  }
-
-  return (
-    <div className="manual-review-panel tv-manual-match-panel">
-      <h4>Изменить совпадение сериала</h4>
-      <div className="manual-review-grid">
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Название" />
-        <input value={year} onChange={(event) => setYear(event.target.value)} placeholder="Год" inputMode="numeric" />
-      </div>
-      <div className="manual-review-actions">
-        <button
-          type="button"
-          disabled={disabled || !query.trim()}
-          onClick={() => void runManualAction(async () => {
-            const results = await manualTvTmdbSearch(show.id, {
-              query: query.trim(),
-              year: year.trim() ? Number(year) : null,
-            });
-            setCandidates(results);
-            setMessage(results.length > 0 ? `Найдено кандидатов: ${results.length}` : "Кандидаты не найдены.");
-          })}
-        >
-          Найти
-        </button>
-      </div>
-      <h4>Загрузить по ID</h4>
-      <p className="muted manual-review-hint">
-        TMDB ID загружает сериал напрямую. IMDb и TVDB ищутся через TMDB Find.
-      </p>
-      <div className="manual-review-grid">
-        <input value={tmdbId} onChange={(event) => setTmdbId(event.target.value)} placeholder="TMDB ID" inputMode="numeric" />
-        <input value={imdbId} onChange={(event) => setImdbId(event.target.value)} placeholder="IMDb ID" />
-        <input value={tvdbId} onChange={(event) => setTvdbId(event.target.value)} placeholder="TVDB ID" inputMode="numeric" />
-      </div>
-      <div className="manual-review-actions">
-        <button
-          type="button"
-          disabled={disabled || (!tmdbId.trim() && !imdbId.trim() && !tvdbId.trim())}
-          onClick={() => void runManualAction(async () => {
-            const validation = validateIdLookupInput(tmdbId, imdbId, tvdbId);
-            if (!validation.valid) {
-              setError(validation.error ?? "Некорректный ID");
-              return;
-            }
-            await selectByIds({
-              tmdb_id: tmdbId.trim() ? Number(tmdbId) : null,
-              imdb_id: imdbId.trim() || null,
-              tvdb_id: tvdbId.trim() ? Number(tvdbId) : null,
-            });
-          })}
-        >
-          Загрузить
-        </button>
-      </div>
-      {message ? <p className="message success">{message}</p> : null}
-      {error ? <p className="message error">{error}</p> : null}
-      {candidates.length > 0 ? (
-        <div className="candidate-list tv-candidate-list">
-          {candidates.map((candidate) => {
-            const poster = candidatePosterUrl(candidate);
-            return (
-              <div className="candidate-card visual-candidate-card" key={`${candidate.media_type}-${candidate.tmdb_id}`}>
-                {poster ? <img className="candidate-poster" src={poster} alt={candidate.title} loading="lazy" /> : <div className="poster-placeholder compact-poster-placeholder">Нет постера</div>}
-                <div className="candidate-content">
-                  <strong>{candidate.title}{candidate.year ? ` (${candidate.year})` : ""}</strong>
-                  <p className="muted">
-                    TMDB {candidate.tmdb_id} · {candidate.original_title ?? "оригинальное название не указано"}
-                  </p>
-                  <p>{candidate.overview ?? "Описание отсутствует."}</p>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    disabled={disabled}
-                    onClick={() => void runManualAction(() => selectByIds({ tmdb_id: candidate.tmdb_id }))}
-                  >
-                    Выбрать этот сериал
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ItemList({
-  items,
-  variant,
-  busy,
-  selectable = false,
-  selectedIds,
-  onToggleSelect,
-  onCandidates,
-  onCorrection,
-  onDecision,
-}: {
-  items: MediaItem[];
-  variant: "matched" | "review";
-  busy: boolean;
-  selectable?: boolean;
-  selectedIds?: Set<number>;
-  onToggleSelect?: (itemId: number) => void;
-  onCandidates: (itemId: number) => Promise<void>;
-  onCorrection: (item: MediaItem, payload: CorrectionPayload) => Promise<void>;
-  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
-}) {
-  if (items.length === 0) {
-    return <p className="muted">Нет объектов в этом разделе.</p>;
-  }
-  return (
-    <div className="review-item-list">
-      {items.map((item) => (
-        <CompactMediaItemRow
-          key={item.id}
-          item={item}
-          variant={variant}
-          busy={busy}
-          selectable={selectable && isBulkSelectable(item)}
-          selected={selectedIds?.has(item.id) ?? false}
-          onToggleSelect={onToggleSelect}
-          onCandidates={onCandidates}
-          onCorrection={onCorrection}
-          onDecision={onDecision}
-          renderManualReview={(rowItem) => (
-            <ManualReviewPanel item={rowItem} busy={busy} onCandidates={onCandidates} onDecision={onDecision} />
-          )}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ManualReviewPanel({
-  item,
-  busy,
-  onCandidates,
-  onDecision,
-}: {
-  item: MediaItem;
-  busy: boolean;
-  onCandidates: (itemId: number) => Promise<void>;
-  onDecision: (itemId: number, payload: ReviewPayload) => Promise<void>;
-}) {
-  const [title, setTitle] = useState(item.manual_title ?? item.parsed_title ?? "");
-  const [year, setYear] = useState(String(item.manual_year ?? item.year ?? ""));
-  const [mediaType, setMediaType] = useState(item.manual_media_type ?? item.media_type);
-  const [tmdbId, setTmdbId] = useState(String(item.manual_tmdb_id ?? item.tmdb_id ?? ""));
-  const [imdbId, setImdbId] = useState(item.manual_imdb_id ?? item.imdb_id ?? "");
-  const [tvdbId, setTvdbId] = useState(String(item.manual_tvdb_id ?? item.tvdb_id ?? ""));
-  const [idError, setIdError] = useState<string | null>(null);
-
-  return (
-    <div className="manual-review-panel">
-      <h4>Найти по названию</h4>
-      <div className="manual-review-grid">
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Название" />
-        <input value={year} onChange={(e) => setYear(e.target.value)} placeholder="Год" inputMode="numeric" />
-        <select value={mediaType} onChange={(e) => setMediaType(e.target.value)}>
-          <option value="MOVIE">Фильм</option>
-          <option value="TV_SHOW">Сериал</option>
-          <option value="TV_EPISODE">Серия</option>
-        </select>
-      </div>
-      <div className="manual-review-actions">
-        <button
-          type="button"
-          disabled={busy || !title.trim()}
-          onClick={() =>
-            void (async () => {
-              await manualTmdbSearch(item.id, {
-                query: title.trim(),
-                year: year === "" ? null : Number(year),
-                media_type: mediaType === "MOVIE" ? "movie" : "tv",
-              });
-              await onCandidates(item.id);
-            })()
-          }
-        >
-          Искать в TMDB
-        </button>
-      </div>
-      <h4>Загрузить по ID</h4>
-      <p className="muted manual-review-hint">
-        Заполните один из ID. TMDB ID используется напрямую. IMDb/TVDB ищутся через TMDB Find.
-      </p>
-      <div className="manual-review-grid">
-        <input value={tmdbId} onChange={(e) => setTmdbId(e.target.value)} placeholder="TMDB ID" inputMode="numeric" />
-        <input value={imdbId} onChange={(e) => setImdbId(e.target.value)} placeholder="IMDb ID" />
-        <input value={tvdbId} onChange={(e) => setTvdbId(e.target.value)} placeholder="TVDB ID" inputMode="numeric" />
-      </div>
-      {idError ? <p className="message error">{idError}</p> : null}
-      <div className="manual-review-actions">
-        <button
-          type="button"
-          disabled={busy || (!tmdbId && !imdbId && !tvdbId)}
-          onClick={() =>
-            void (async () => {
-              const validation = validateIdLookupInput(tmdbId, imdbId, tvdbId);
-              if (!validation.valid) {
-                setIdError(validation.error ?? "Некорректный ID");
-                return;
-              }
-              setIdError(null);
-              await manualTmdbLookup(item.id, {
-                tmdb_id: tmdbId.trim() ? Number(tmdbId) : null,
-                imdb_id: imdbId.trim() || null,
-                tvdb_id: tvdbId.trim() ? Number(tvdbId) : null,
-                media_type: mediaType === "MOVIE" ? "movie" : "tv",
-              });
-              await onCandidates(item.id);
-            })()
-          }
-        >
-          Загрузить по ID
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() =>
-            void onDecision(item.id, {
-              decision: "approved",
-              note: "Подтверждено пользователем",
-            })
-          }
-        >
-          Подтвердить выбранный вариант
-        </button>
-        <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "ignored", note: "Не добавлять" })}>
-          Не добавлять
-        </button>
-        <button type="button" disabled={busy} onClick={() => void onDecision(item.id, { decision: "deferred", note: "Отложено" })}>
-          Отложить
-        </button>
-        <button
-          type="button"
-          disabled={busy || (!tmdbId && !imdbId)}
-          onClick={() =>
-            void onDecision(item.id, {
-              decision: "manual_override",
-              manual_title: title.trim() || null,
-              manual_year: year === "" ? null : Number(year),
-              manual_tmdb_id: tmdbId ? Number(tmdbId) : null,
-              manual_imdb_id: imdbId || null,
-              manual_tvdb_id: tvdbId ? Number(tvdbId) : null,
-              manual_media_type: mediaType,
-              note: "Исправлено вручную",
-            })
-          }
-        >
-          Сохранить исправление
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TechnicalTables({
-  files,
-  items,
-  plans,
-  operations,
-  onCandidates,
-  onOperations,
-}: {
-  files: MediaFile[];
-  items: MediaItem[];
-  plans: OperationPlan[];
-  operations: PlanOperation[];
-  onCandidates: (itemId: number) => Promise<void>;
-  onOperations: (planId: number) => Promise<void>;
-}) {
-  return (
-    <div className="technical-tables">
-      <h4>Файлы</h4>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {files.map((f) => (
-              <tr key={f.id}>
-                <td>{f.id}</td>
-                <td>{f.kind}</td>
-                <td>{f.file_name}</td>
-                <td>{fmt(f.media_item_id)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <h4>Объекты</h4>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td>{item.id}</td>
-                <td>{labelMediaType(item.media_type)}</td>
-                <td>{labelMediaItemStatus(item.status)}</td>
-                <td>{item.parsed_title ?? "—"}</td>
-                <td>
-                  <button type="button" onClick={() => void onCandidates(item.id)}>Кандидаты</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <h4>Планы</h4>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {plans.map((plan) => (
-              <tr key={plan.id}>
-                <td>{plan.id}</td>
-                <td>{labelPlanStatus(plan.status)}</td>
-                <td>{formatDate(plan.created_at)}</td>
-                <td>
-                  <button type="button" onClick={() => void onOperations(plan.id)}>Операции</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <details>
-        <summary>Технический список операций</summary>
-        <div className="table-wrap">
-          <table>
-            <tbody>
-              {operations.map((op) => (
-                <tr key={op.id}>
-                  <td>{op.id}</td>
-                  <td>{labelOperationType(op.operation_type)}</td>
-                  <td>{labelOperationStatus(op.status)}</td>
-                  <td>{op.validation_status ?? "—"}</td>
-                  <td className="path-text">{op.source_path ?? "—"}</td>
-                  <td className="path-text">{op.target_path ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </details>
-    </div>
-  );
-}
