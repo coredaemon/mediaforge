@@ -1084,6 +1084,33 @@ th {
   margin: 0 0 0.5rem;
 }
 
+.apply-progress {
+  margin: 1rem 0;
+}
+
+.apply-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.35rem;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.apply-progress-track {
+  height: 0.6rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.apply-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: #1d4ed8;
+  transition: width 180ms ease;
+}
+
 .apply-runs-table {
   width: 100%;
   font-size: 0.9rem;

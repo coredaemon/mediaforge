@@ -94,6 +94,10 @@ export function PlanApplyPanel({
   const grouped = groupOperationsByItem(operations.filter((op) => !isTvOperation(op)));
   const tvGroups = groupTvOperationsByShow(operations);
   const itemMap = new Map(items.map((item) => [item.id, item]));
+  const latestRun = applyRuns[0] ?? null;
+  const runProgressTotal = latestRun?.total_operations ?? 0;
+  const runProgressDone = (latestRun?.done_operations ?? 0) + (latestRun?.failed_operations ?? 0);
+  const runProgressPercent = runProgressTotal > 0 ? Math.round((runProgressDone / runProgressTotal) * 100) : 0;
 
   return (
     <section className="panel plan-apply-panel">
@@ -159,6 +163,20 @@ export function PlanApplyPanel({
         <p className={applyResult.failed_operations > 0 ? "message error" : "message success"}>
           {formatApplyResult(applyResult, summary, tvPlan)}
         </p>
+      ) : null}
+
+      {latestRun?.status === "running" ? (
+        <div className="apply-progress" aria-label="Прогресс применения">
+          <div className="apply-progress-label">
+            <span>Применение выполняется</span>
+            <span>
+              {runProgressDone} из {runProgressTotal} операций
+            </span>
+          </div>
+          <div className="apply-progress-track">
+            <div className="apply-progress-bar" style={{ width: `${runProgressPercent}%` }} />
+          </div>
+        </div>
       ) : null}
 
       {plans.length > 0 ? (

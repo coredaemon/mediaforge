@@ -682,11 +682,11 @@ export function SessionDetailPage() {
     await runAction("apply-plan", async () => {
       const result = await applyPlan(planId, { confirm: true });
       setApplyResult(result);
-      setInfo(`Применено ${result.done_operations} из ${result.total_operations} операций.`);
+      setInfo(`Запущено применение ${result.total_operations} операций.`);
       setOperations(await listPlanOperations(planId));
       setPlans(await listPlans(numId));
       await loadApplyRuns(planId);
-    }, "План применён.");
+    }, "План запущен.");
   }
 
   async function handleRollbackPlan() {
@@ -718,6 +718,29 @@ export function SessionDetailPage() {
 
   const busy = actionLoading !== null;
   const nestingWarning = session ? detectPathNestingWarning(session.source_path, session.target_path) : null;
+
+  useEffect(() => {
+    const planId = selectedPlanId ?? latestPlanId;
+    if (planId === null) return;
+    const activePlan = plans.find((plan) => plan.id === planId) ?? null;
+    const latestRun = applyRuns[0] ?? null;
+    const applying = activePlan?.status === "APPLYING" || latestRun?.status === "running";
+    if (!applying) return;
+
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        await loadApplyRuns(planId);
+        const nextPlans = await listPlans(numId);
+        setPlans(nextPlans);
+        const nextPlan = nextPlans.find((plan) => plan.id === planId) ?? null;
+        if (nextPlan?.status !== "APPLYING") {
+          setOperations(await listPlanOperations(planId));
+        }
+      })();
+    }, 1500);
+
+    return () => window.clearInterval(intervalId);
+  }, [applyRuns, latestPlanId, loadApplyRuns, numId, plans, selectedPlanId]);
 
   async function handleDeleteSession() {
     if (!session) return;

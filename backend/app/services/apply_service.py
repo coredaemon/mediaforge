@@ -5,8 +5,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..db.session import async_session_factory
 from ..models.apply_operation_log import ApplyOperationLog
 from ..models.apply_run import ApplyRun
 from ..models.enums import ApplyRunStatus, OperationStatus, OperationType, PlanStatus, ValidationStatus
@@ -46,6 +47,10 @@ class ApplyService:
         self._http_client = http_client
 
     async def apply_plan(self, plan_id: int, confirm: bool) -> PlanApplyResult:
+        result = await self.start_apply(plan_id, confirm=confirm)
+        return await self.execute_apply_run(result.apply_run_id)
+
+    async def start_apply(self, plan_id: int, confirm: bool) -> PlanApplyResult:
         if not confirm:
             raise PlanApplyError("Apply requires confirm=true")
 
@@ -53,6 +58,8 @@ class ApplyService:
         if plan is None:
             raise OperationPlanNotFoundError(f"Operation plan {plan_id} was not found.")
         if plan.status != PlanStatus.READY:
+            if plan.status == PlanStatus.APPLYING:
+                raise PlanApplyError("Plan is already applying", error_code="apply_in_progress")
             if plan.status == PlanStatus.APPLIED:
                 raise PlanApplyError("Plan has already been applied")
             raise PlanApplyError(f"Plan status must be READY, got {plan.status}")
@@ -75,8 +82,29 @@ class ApplyService:
             )
         )
         plan.status = PlanStatus.APPLYING
-        await self.session.flush()
+        await self.session.commit()
+        await self.session.refresh(plan)
+        await self.session.refresh(apply_run)
 
+        return PlanApplyResult(
+            plan_id=plan.id,
+            apply_run_id=apply_run.id,
+            status=plan.status,
+            total_operations=apply_run.total_operations,
+            done_operations=apply_run.done_operations,
+            failed_operations=apply_run.failed_operations,
+            error_message=apply_run.error_message,
+        )
+
+    async def execute_apply_run(self, apply_run_id: int) -> PlanApplyResult:
+        apply_run = await self.session.get(ApplyRun, apply_run_id)
+        if apply_run is None:
+            raise PlanApplyError(f"Apply run {apply_run_id} was not found")
+        plan = await self.operation_plans.get_by_id(apply_run.operation_plan_id)
+        if plan is None:
+            raise OperationPlanNotFoundError(f"Operation plan {apply_run.operation_plan_id} was not found.")
+
+        operations = list(await self.plan_operations.list_by_plan(plan.id))
         done_count = 0
         failed_count = 0
         fatal_error: str | None = None
@@ -86,6 +114,9 @@ class ApplyService:
                 await self._mark_operation_failed(operation, apply_run, "Operation has validation conflict")
                 failed_count += 1
                 fatal_error = operation.validation_error or "Validation conflict"
+                apply_run.done_operations = done_count
+                apply_run.failed_operations = failed_count
+                await self.session.commit()
                 break
 
             started_at = datetime.now(UTC)
@@ -124,11 +155,14 @@ class ApplyService:
                 )
                 failed_count += 1
                 fatal_error = message
+                apply_run.done_operations = done_count
+                apply_run.failed_operations = failed_count
+                await self.session.commit()
                 break
 
             apply_run.done_operations = done_count
             apply_run.failed_operations = failed_count
-            await self.session.flush()
+            await self.session.commit()
 
         apply_run.finished_at = datetime.now(UTC)
         apply_run.done_operations = done_count
@@ -373,3 +407,11 @@ class ApplyService:
         )
         self.session.add(log)
         await self.session.flush()
+
+
+async def execute_apply_run_in_background(
+    apply_run_id: int,
+    session_factory: async_sessionmaker[AsyncSession] = async_session_factory,
+) -> None:
+    async with session_factory() as session:
+        await ApplyService(session).execute_apply_run(apply_run_id)

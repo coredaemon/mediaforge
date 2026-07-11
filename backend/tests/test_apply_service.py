@@ -136,6 +136,43 @@ async def test_apply_requires_confirm_true(db_session: AsyncSession, tmp_path) -
         await ApplyService(db_session).apply_plan(plan_id, confirm=False)
 
 
+async def test_start_apply_returns_running_run(db_session: AsyncSession, tmp_path) -> None:
+    plan_id, _, _, _ = await _create_ready_plan(db_session, tmp_path)
+
+    result = await ApplyService(db_session).start_apply(plan_id, confirm=True)
+
+    plan = await OperationPlanRepository(db_session).get_by_id(plan_id)
+    run = await db_session.get(ApplyRun, result.apply_run_id)
+    assert plan is not None
+    assert run is not None
+    assert result.status == PlanStatus.APPLYING
+    assert plan.status == PlanStatus.APPLYING
+    assert run.status == ApplyRunStatus.RUNNING
+    assert result.done_operations == 0
+
+
+async def test_execute_apply_run_finishes_started_apply(db_session: AsyncSession, tmp_path) -> None:
+    plan_id, source, target, _ = await _create_ready_plan(db_session, tmp_path)
+    service = ApplyService(db_session, http_client=_mock_http_client())
+    started = await service.start_apply(plan_id, confirm=True)
+
+    result = await service.execute_apply_run(started.apply_run_id)
+
+    assert result.status == PlanStatus.APPLIED
+    assert not (source / "Movie.2024.mkv").exists()
+    assert (target / "Movie (2024)" / "Movie (2024).mkv").exists()
+
+
+async def test_start_apply_rejects_plan_already_applying(db_session: AsyncSession, tmp_path) -> None:
+    plan_id, _, _, _ = await _create_ready_plan(db_session, tmp_path)
+    await ApplyService(db_session).start_apply(plan_id, confirm=True)
+
+    with pytest.raises(PlanApplyError) as exc_info:
+        await ApplyService(db_session).start_apply(plan_id, confirm=True)
+
+    assert exc_info.value.error_code == "apply_in_progress"
+
+
 async def test_apply_creates_directories(db_session: AsyncSession, tmp_path) -> None:
     plan_id, _, target, _ = await _create_ready_plan(db_session, tmp_path)
     client = _mock_http_client()

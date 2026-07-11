@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from backend.app.api.routes.scan_sessions import get_tmdb_client
@@ -131,7 +133,18 @@ def test_tv_plan_apply_api_applies_safe_tv_operations(client: TestClient, tmp_pa
 
     assert apply_response.status_code == 200
     result = apply_response.json()
-    assert result["status"] == "APPLIED"
+    assert result["status"] == "APPLYING"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        plan_status = client.get(f"/operation-plans/{plan_id}").json()["status"]
+        if plan_status != "APPLYING":
+            break
+        time.sleep(0.05)
+    plan_result = client.get(f"/operation-plans/{plan_id}").json()
+    runs = client.get(f"/operation-plans/{plan_id}/apply-runs").json()
+    result = runs[0]
+    assert plan_result["status"] == "APPLIED"
+    assert result["status"] == "completed"
     assert result["failed_operations"] == 0
     assert not (source_path / "Test Show" / "Season 01" / "Test Show S01E01.mkv").exists()
     moved_videos = list(target_path.rglob("*.mkv"))
