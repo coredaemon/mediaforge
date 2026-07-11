@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
@@ -72,10 +72,10 @@ function detectPathNestingWarning(source: string, target: string): string | null
   const t = normalisePath(target);
   if (s === t) return null;
   if (t.startsWith(s + "/")) {
-    return "РџР°РїРєР° РјРµРґРёР°С‚РµРєРё РЅР°С…РѕРґРёС‚СЃСЏ РІРЅСѓС‚СЂРё РїР°РїРєРё СЃ С„Р°Р№Р»Р°РјРё. Р”Р»СЏ РЅРѕРІС‹С… СЃРµСЃСЃРёР№ С‚Р°РєРѕР№ РІР°СЂРёР°РЅС‚ Р±СѓРґРµС‚ Р·Р°РїСЂРµС‰С‘РЅ.";
+    return "Папка медиатеки находится внутри папки с файлами. Для новых сессий такой вариант будет запрещён.";
   }
   if (s.startsWith(t + "/")) {
-    return "РџР°РїРєР° СЃ С„Р°Р№Р»Р°РјРё РЅР°С…РѕРґРёС‚СЃСЏ РІРЅСѓС‚СЂРё РїР°РїРєРё РјРµРґРёР°С‚РµРєРё. Р”Р»СЏ РЅРѕРІС‹С… СЃРµСЃСЃРёР№ С‚Р°РєРѕР№ РІР°СЂРёР°РЅС‚ Р±СѓРґРµС‚ Р·Р°РїСЂРµС‰С‘РЅ.";
+    return "Папка с файлами находится внутри папки медиатеки. Для новых сессий такой вариант будет запрещён.";
   }
   return null;
 }
@@ -90,10 +90,10 @@ function SummaryCard({ label, value }: { label: string; value: string | number }
 }
 
 function labelContentType(value: MediaClassificationResult["content_type"] | undefined): string {
-  if (value === "movies") return "С„РёР»СЊРјС‹";
-  if (value === "tv") return "СЃРµСЂРёР°Р»С‹";
-  if (value === "mixed") return "СЃРјРµС€Р°РЅРЅР°СЏ РїР°РїРєР°";
-  return "РЅРµРёР·РІРµСЃС‚РЅРѕ";
+  if (value === "movies") return "фильмы";
+  if (value === "tv") return "сериалы";
+  if (value === "mixed") return "смешанная папка";
+  return "неизвестно";
 }
 
 function formatPreflightError(result: RecognitionPreflightResult): string {
@@ -101,12 +101,12 @@ function formatPreflightError(result: RecognitionPreflightResult): string {
     return result.message;
   }
   if (!result.local.ok) {
-    return getPreflightShortMessage(result.local) ?? "Р›РѕРєР°Р»СЊРЅР°СЏ AI-РјРѕРґРµР»СЊ РЅРµ РѕС‚РІРµС‡Р°РµС‚. РџСЂРѕРІРµСЂСЊС‚Рµ Ollama Рё РЅР°СЃС‚СЂРѕР№РєРё РјРѕРґРµР»Рё.";
+    return getPreflightShortMessage(result.local) ?? "Локальная AI-модель не отвечает. Проверьте Ollama и настройки модели.";
   }
   if (!result.cloud.ok && !result.cloud_fallback?.ok) {
-    return getPreflightShortMessage(result.cloud) ?? "РћР±Р»Р°С‡РЅС‹Рµ РјРѕРґРµР»Рё РЅРµРґРѕСЃС‚СѓРїРЅС‹. РџСЂРѕРІРµСЂСЊС‚Рµ РєР»СЋС‡ Рё РЅР°СЃС‚СЂРѕР№РєРё.";
+    return getPreflightShortMessage(result.cloud) ?? "Облачные модели недоступны. Проверьте ключ и настройки.";
   }
-  return "РџСЂРѕРІРµСЂРєР° AI РЅРµ РїСЂРѕР№РґРµРЅР°.";
+  return "Проверка AI не пройдена.";
 }
 
 export function SessionDetailPage() {
@@ -158,7 +158,7 @@ export function SessionDetailPage() {
       () => listApplyRuns(planId),
       setApplyRuns,
       setApplyRunsError,
-      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ Р¶СѓСЂРЅР°Р» РїСЂРёРјРµРЅРµРЅРёСЏ",
+      "Не удалось загрузить журнал применения",
     );
   }, []);
 
@@ -167,7 +167,7 @@ export function SessionDetailPage() {
       () => listPlans(numId),
       setPlans,
       setPlanError,
-      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РїР»Р°РЅ РѕРїРµСЂР°С†РёР№",
+      "Не удалось загрузить план операций",
     );
     const planId = selectedPlanId ?? loadedPlans?.[0]?.id ?? null;
     if (planId !== null) {
@@ -176,7 +176,7 @@ export function SessionDetailPage() {
         () => listPlanOperations(planId),
         setOperations,
         setPlanError,
-        "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РѕРїРµСЂР°С†РёРё РїР»Р°РЅР°",
+        "Не удалось загрузить операции плана",
       );
       if (ops !== null) {
         await loadApplyRuns(planId);
@@ -193,25 +193,25 @@ export function SessionDetailPage() {
       () => listFiles(numId),
       setFiles,
       setReviewError,
-      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє С„Р°Р№Р»РѕРІ",
+      "Не удалось загрузить список файлов",
     );
     await loadSection(
       () => classifySession(numId),
       setClassification,
       setReviewError,
-      "РќРµ СѓРґР°Р»РѕСЃСЊ РєР»Р°СЃСЃРёС„РёС†РёСЂРѕРІР°С‚СЊ СЃРѕРґРµСЂР¶РёРјРѕРµ РїР°РїРєРё",
+      "Не удалось классифицировать содержимое папки",
     );
     const loadedItems = await loadSection(
       () => listItems(numId),
       setItems,
       setReviewError,
-      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє С„РёР»СЊРјРѕРІ",
+      "Не удалось загрузить список фильмов",
     );
     const loadedTvShows = await loadSection(
       () => listTvShows(numId),
       setTvShows,
       setReviewError,
-      "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє СЃРµСЂРёР°Р»РѕРІ",
+      "Не удалось загрузить список сериалов",
     );
     return loadedFiles !== null && loadedItems !== null && loadedTvShows !== null;
   }, [numId]);
@@ -223,7 +223,7 @@ export function SessionDetailPage() {
       setSessionError(null);
       return loadedSession;
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРµСЃСЃРёСЋ";
+      const message = err instanceof ApiError ? err.message : "Не удалось загрузить сессию";
       setSessionError(message);
       if (err instanceof ApiError && err.status === 404) {
         setError(message);
@@ -339,7 +339,7 @@ export function SessionDetailPage() {
       setInfo(msg);
       await loadAll();
     } catch (err) {
-      const raw = err instanceof ApiError ? err.message : `РћС€РёР±РєР°: ${key}`;
+      const raw = err instanceof ApiError ? err.message : `Ошибка: ${key}`;
       setError(formatTmdbError(raw));
     } finally {
       setActionLoading(null);
@@ -386,7 +386,7 @@ export function SessionDetailPage() {
       const classificationResult = await runStep("classification", () => classifySession(numId));
       const contentType = classificationResult.content_type;
       if (classificationResult.needs_user_decision) {
-        throw new ApiError(400, "РўРёРї СЃРѕРґРµСЂР¶РёРјРѕРіРѕ РЅРµ РѕРїСЂРµРґРµР»С‘РЅ СѓРІРµСЂРµРЅРЅРѕ. Р’С‹Р±РµСЂРёС‚Рµ СЂРµР¶РёРј РѕР±СЂР°Р±РѕС‚РєРё РІСЂСѓС‡РЅСѓСЋ.");
+        throw new ApiError(400, "Тип содержимого не определён уверенно. Выберите режим обработки вручную.");
       }
 
       if (contentType === "movies" || contentType === "mixed") {
@@ -425,12 +425,12 @@ export function SessionDetailPage() {
         setStepStatus({ ...nextStatus });
       }
       setAnalysisCollapsed(true);
-      setInfo("РђРЅР°Р»РёР· Р·Р°РІРµСЂС€С‘РЅ. РџСЂРѕРІРµСЂСЊС‚Рµ РЅР°Р№РґРµРЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ Рё Р±РµР·РѕРїР°СЃРЅС‹Р№ РїР»Р°РЅ.");
+      setInfo("Анализ завершён. Проверьте найденные объекты и безопасный план.");
     } catch (err) {
       const failed = Object.entries(nextStatus).find(([, status]) => status === "running")?.[0];
       if (failed) nextStatus[failed] = "error";
       setStepStatus({ ...nextStatus });
-      const raw = err instanceof ApiError ? err.message : "РђРЅР°Р»РёР· РѕСЃС‚Р°РЅРѕРІР»РµРЅ РёР·-Р·Р° РѕС€РёР±РєРё.";
+      const raw = err instanceof ApiError ? err.message : "Анализ остановлен из-за ошибки.";
       setError(formatTmdbError(raw));
     } finally {
       setActionLoading(null);
@@ -446,7 +446,7 @@ export function SessionDetailPage() {
       const loaded = await listTmdbCandidates(itemId);
       setCandidates([...loaded].sort((a, b) => b.id - a.id));
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєР°РЅРґРёРґР°С‚РѕРІ TMDB";
+      const msg = err instanceof ApiError ? err.message : "Не удалось загрузить кандидатов TMDB";
       setReviewError(msg);
       setCandidates([]);
     }
@@ -467,7 +467,7 @@ export function SessionDetailPage() {
         setCandidates(await listTmdbCandidates(selectedItemId));
         setItems(await listItems(numId));
       },
-      "РљР°РЅРґРёРґР°С‚ РІС‹Р±СЂР°РЅ. РўРµРїРµСЂСЊ РјРѕР¶РЅРѕ РїРµСЂРµСЃРѕР±СЂР°С‚СЊ РїР»Р°РЅ.",
+      "Кандидат выбран. Теперь можно пересобрать план.",
     );
   }
 
@@ -498,8 +498,8 @@ export function SessionDetailPage() {
     await runAction("bulk-approve-all", async () => {
       const result = await approveAllMatched(numId, { scope: "matched" });
       setBulkResult(result);
-      setInfo(`РћРґРѕР±СЂРµРЅРѕ: ${result.approved_count} В· РїСЂРѕРїСѓС‰РµРЅРѕ: ${result.skipped_count}`);
-    }, "РњР°СЃСЃРѕРІРѕРµ РѕРґРѕР±СЂРµРЅРёРµ Р·Р°РІРµСЂС€РµРЅРѕ.");
+      setInfo(`Одобрено: ${result.approved_count} · пропущено: ${result.skipped_count}`);
+    }, "Массовое одобрение завершено.");
   }
 
   async function handleBulkApproveSelected() {
@@ -508,18 +508,18 @@ export function SessionDetailPage() {
     await runAction("bulk-approve-selected", async () => {
       const result = await approveAllMatched(numId, { scope: "selected", item_ids: ids });
       setBulkResult(result);
-      setInfo(`РћРґРѕР±СЂРµРЅРѕ: ${result.approved_count} В· РїСЂРѕРїСѓС‰РµРЅРѕ: ${result.skipped_count}`);
-    }, "Р’С‹Р±СЂР°РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ РѕРґРѕР±СЂРµРЅС‹.");
+      setInfo(`Одобрено: ${result.approved_count} · пропущено: ${result.skipped_count}`);
+    }, "Выбранные объекты одобрены.");
   }
 
   async function handleBulkDecision(decision: "ignored" | "deferred") {
     const ids = [...selectedItemIds];
     if (ids.length === 0) return;
-    const note = decision === "ignored" ? "РќРµ РґРѕР±Р°РІР»СЏС‚СЊ" : "РћС‚Р»РѕР¶РµРЅРѕ";
+    const note = decision === "ignored" ? "Не добавлять" : "Отложено";
     await runAction(`bulk-${decision}`, async () => {
       const result = await bulkReviewDecision(numId, { item_ids: ids, decision, note });
       setBulkResult(result);
-    }, decision === "ignored" ? "Р’С‹Р±СЂР°РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ РёСЃРєР»СЋС‡РµРЅС‹." : "Р’С‹Р±СЂР°РЅРЅС‹Рµ РѕР±СЉРµРєС‚С‹ РѕС‚Р»РѕР¶РµРЅС‹.");
+    }, decision === "ignored" ? "Выбранные объекты исключены." : "Выбранные объекты отложены.");
   }
 
   async function handleValidatePlan() {
@@ -530,9 +530,9 @@ export function SessionDetailPage() {
       setValidationResult(result);
       setOperations(result.operations);
       setInfo(
-        `РџСЂРѕРІРµСЂРєР°: OK ${result.ok_count}, РїСЂРµРґСѓРїСЂРµР¶РґРµРЅРёСЏ ${result.warning_count}, РєРѕРЅС„Р»РёРєС‚С‹ ${result.conflict_count}`,
+        `Проверка: OK ${result.ok_count}, предупреждения ${result.warning_count}, конфликты ${result.conflict_count}`,
       );
-    }, "РџР»Р°РЅ РїСЂРѕРІРµСЂРµРЅ.");
+    }, "План проверен.");
   }
 
   async function handleApplyPlan() {
@@ -542,11 +542,11 @@ export function SessionDetailPage() {
     await runAction("apply-plan", async () => {
       const result = await applyPlan(planId, { confirm: true });
       setApplyResult(result);
-      setInfo(`Р—Р°РїСѓС‰РµРЅРѕ РїСЂРёРјРµРЅРµРЅРёРµ ${result.total_operations} РѕРїРµСЂР°С†РёР№.`);
+      setInfo(`Запущено применение ${result.total_operations} операций.`);
       setOperations(await listPlanOperations(planId));
       setPlans(await listPlans(numId));
       await loadApplyRuns(planId);
-    }, "РџР»Р°РЅ Р·Р°РїСѓС‰РµРЅ.");
+    }, "План запущен.");
   }
 
   async function handleRollbackPlan() {
@@ -556,11 +556,11 @@ export function SessionDetailPage() {
     await runAction("rollback-plan", async () => {
       const result = await rollbackPlan(planId, { confirm: true });
       setApplyResult(null);
-      setInfo(`РћС‚РєР°С‡РµРЅРѕ ${result.rolled_back_operations} РёР· ${result.total_operations} РѕРїРµСЂР°С†РёР№.`);
+      setInfo(`Откачено ${result.rolled_back_operations} из ${result.total_operations} операций.`);
       setOperations(await listPlanOperations(planId));
       setPlans(await listPlans(numId));
       await loadApplyRuns(planId);
-    }, "РџР»Р°РЅ РѕС‚РєР°С‡РµРЅ.");
+    }, "План откачен.");
   }
 
   function toggleItemSelection(itemId: number) {
@@ -599,7 +599,7 @@ export function SessionDetailPage() {
   }, [applyRuns, latestPlanId, loadApplyRuns, numId, plans, selectedPlanId]);
 
   if (!Number.isFinite(numId)) {
-    return <div className="message error">РќРµРІРµСЂРЅС‹Р№ ID СЃРµСЃСЃРёРё.</div>;
+    return <div className="message error">Неверный ID сессии.</div>;
   }
 
   async function handleDeleteSession() {
@@ -628,7 +628,7 @@ export function SessionDetailPage() {
       {error ? <div className="message error">{error}</div> : null}
       {info ? <div className="message success">{info}</div> : null}
       <div className="safety-notice">
-        РџР»Р°РЅ вЂ” РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅС‹Р№ РїСЂРѕСЃРјРѕС‚СЂ. Р¤Р°Р№Р»С‹ РёР·РјРµРЅСЏС‚СЃСЏ С‚РѕР»СЊРєРѕ РїРѕСЃР»Рµ СЏРІРЅРѕРіРѕ РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ В«РџСЂРёРјРµРЅРёС‚СЊ РїР»Р°РЅВ».
+        План — предварительный просмотр. Файлы изменятся только после явного подтверждения «Применить план».
       </div>
 
       <SessionHeader
@@ -661,41 +661,41 @@ export function SessionDetailPage() {
         onPlan={() => void runAction("plan", () => createPlan(numId), "План построен.")}
       />
       <section className="summary-dashboard">
-        <SummaryCard label="Р’СЃРµРіРѕ С„Р°Р№Р»РѕРІ" value={summary.totalFiles} />
-        <SummaryCard label="Р’РёРґРµРѕ" value={summary.video} />
-        <SummaryCard label="РќРѕРІС‹С…" value={summary.fresh} />
-        <SummaryCard label="РЈР¶Рµ РѕР±СЂР°Р±РѕС‚Р°РЅРѕ" value={summary.reused} />
-        <SummaryCard label="РќР°Р№РґРµРЅРѕ" value={summary.matched} />
-        <SummaryCard label="РўСЂРµР±СѓСЋС‚ РїСЂРѕРІРµСЂРєРё" value={summary.review} />
-        <SummaryCard label="РСЃРєР»СЋС‡РµРЅРѕ" value={summary.ignored} />
-        <SummaryCard label="РћС‚Р»РѕР¶РµРЅРѕ" value={summary.deferred} />
-        <SummaryCard label="РћРїРµСЂР°С†РёР№ РІ РїР»Р°РЅРµ" value={summary.operations} />
-        <SummaryCard label="РљРѕРЅС„Р»РёРєС‚РѕРІ" value={summary.conflicts} />
+        <SummaryCard label="Всего файлов" value={summary.totalFiles} />
+        <SummaryCard label="Видео" value={summary.video} />
+        <SummaryCard label="Новых" value={summary.fresh} />
+        <SummaryCard label="Уже обработано" value={summary.reused} />
+        <SummaryCard label="Найдено" value={summary.matched} />
+        <SummaryCard label="Требуют проверки" value={summary.review} />
+        <SummaryCard label="Исключено" value={summary.ignored} />
+        <SummaryCard label="Отложено" value={summary.deferred} />
+        <SummaryCard label="Операций в плане" value={summary.operations} />
+        <SummaryCard label="Конфликтов" value={summary.conflicts} />
       </section>
 
       {classification ? (
         <section className="panel compact-review-section">
           <div className="section-heading">
-            <h3>РўРёРї СЃРѕРґРµСЂР¶РёРјРѕРіРѕ: {labelContentType(classification.content_type)}</h3>
-            <span className="muted">СѓРІРµСЂРµРЅРЅРѕСЃС‚СЊ {Math.round(classification.confidence * 100)}%</span>
+            <h3>Тип содержимого: {labelContentType(classification.content_type)}</h3>
+            <span className="muted">уверенность {Math.round(classification.confidence * 100)}%</span>
           </div>
           <p className="muted">{classification.reason}</p>
           {classification.content_type === "tv" || classification.content_type === "mixed" ? (
             <p className="muted">
-              РЎРµСЂРёР°Р»РѕРІ: {tvShows.length} В· РЎРµР·РѕРЅРѕРІ: {tvSeasonCount} В· Р­РїРёР·РѕРґРѕРІ: {tvEpisodeCount}
+              Сериалов: {tvShows.length} · Сезонов: {tvSeasonCount} · Эпизодов: {tvEpisodeCount}
             </p>
           ) : null}
           <p className="muted">
-            Р’РёРґРµРѕ: {classification.video_files} В· Р’Р»РѕР¶РµРЅРЅС‹С… РїР°РїРѕРє: {classification.nested_folder_count} В· TV-РїСЂРёР·РЅР°РєРѕРІ: {classification.tv_like_files} В· Р¤РёР»СЊРј-РїСЂРёР·РЅР°РєРѕРІ: {classification.movie_like_files}
+            Видео: {classification.video_files} · Вложенных папок: {classification.nested_folder_count} · TV-признаков: {classification.tv_like_files} · Фильм-признаков: {classification.movie_like_files}
           </p>
           {classification.known_extensions.length > 0 ? (
             <p className="muted">
-              Р’РёРґРµРѕ-СЂР°СЃС€РёСЂРµРЅРёСЏ: {classification.known_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
+              Видео-расширения: {classification.known_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
             </p>
           ) : null}
           {classification.ignored_extensions.length > 0 ? (
             <p className="muted">
-              РРіРЅРѕСЂРёСЂСѓСЋС‚СЃСЏ: {classification.ignored_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
+              Игнорируются: {classification.ignored_extensions.map((item) => `${item.extension} (${item.count})`).join(", ")}
             </p>
           ) : null}
           {classification.warnings.map((warning) => (
@@ -703,25 +703,25 @@ export function SessionDetailPage() {
           ))}
           {classification.needs_user_decision ? (
             <div className="manual-review-actions">
-              <button type="button" disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "РџР°РїРєР° Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РєР°Рє С„РёР»СЊРјС‹.")}>Р¤РёР»СЊРјС‹</button>
-              <button type="button" disabled={busy} onClick={() => void runAction("tv", () => analyzeTvSession(numId, true), "РџР°РїРєР° Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РєР°Рє СЃРµСЂРёР°Р»С‹.")}>РЎРµСЂРёР°Р»С‹</button>
+              <button type="button" disabled={busy} onClick={() => void runAction("parse", () => parseSession(numId), "Папка будет обработана как фильмы.")}>Фильмы</button>
+              <button type="button" disabled={busy} onClick={() => void runAction("tv", () => analyzeTvSession(numId, true), "Папка будет обработана как сериалы.")}>Сериалы</button>
               <button type="button" disabled={busy} onClick={() => void runAction("mixed", async () => {
                 await parseSession(numId);
                 await analyzeTvSession(numId, true);
-              }, "РџР°РїРєР° Р±СѓРґРµС‚ РѕР±СЂР°Р±РѕС‚Р°РЅР° РєР°Рє СЃРјРµС€Р°РЅРЅР°СЏ.")}>РЎРјРµС€Р°РЅРЅР°СЏ РїР°РїРєР°</button>
+              }, "Папка будет обработана как смешанная.")}>Смешанная папка</button>
             </div>
           ) : null}
         </section>
       ) : null}
 
       {isTvOnlySession ? (
-        <p className="muted compact-section-row">Р¤РёР»СЊРјС‹: РЅРµ РѕР±РЅР°СЂСѓР¶РµРЅС‹</p>
+        <p className="muted compact-section-row">Фильмы: не обнаружены</p>
       ) : (
       <section className="panel review-main-panel">
         <div className="section-heading">
-          <h3>РџСЂРѕРІРµСЂРєР° РЅР°Р№РґРµРЅРЅС‹С… С„РёР»СЊРјРѕРІ</h3>
+          <h3>Проверка найденных фильмов</h3>
           <span className="muted">
-            Р’ РїР»Р°РЅ: {planExcluded.plannable} В· РёСЃРєР»СЋС‡РµРЅРѕ: {planExcluded.ignored} В· РѕС‚Р»РѕР¶РµРЅРѕ: {planExcluded.deferred}
+            В план: {planExcluded.plannable} · исключено: {planExcluded.ignored} · отложено: {planExcluded.deferred}
           </span>
         </div>
         {reviewError ? <div className="message error">{reviewError}</div> : null}
@@ -737,7 +737,7 @@ export function SessionDetailPage() {
           onIgnoreSelected={() => void handleBulkDecision("ignored")}
           onDeferSelected={() => void handleBulkDecision("deferred")}
           onClearSelection={() => setSelectedItemIds(new Set())}
-          onRebuildPlan={() => void runAction("rebuild-plan", () => createPlan(numId, true), "РџР»Р°РЅ РїРµСЂРµСЃРѕР±СЂР°РЅ.")}
+          onRebuildPlan={() => void runAction("rebuild-plan", () => createPlan(numId, true), "План пересобран.")}
         />
         <ItemList
           variant="matched"
@@ -766,26 +766,26 @@ export function SessionDetailPage() {
         planStale={planStale}
         onDecision={async (showId, decision) => {
           const messages: Record<string, string> = {
-            approved: "РЎРµСЂРёР°Р» РІРєР»СЋС‡С‘РЅ РІ РїР»Р°РЅ. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ.",
-            ignored: "РЎРµСЂРёР°Р» РёСЃРєР»СЋС‡С‘РЅ РёР· РїР»Р°РЅР°. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ, С‡С‚РѕР±С‹ РѕР±РЅРѕРІРёС‚СЊ РѕРїРµСЂР°С†РёРё.",
-            deferred: "РЎРµСЂРёР°Р» РѕС‚Р»РѕР¶РµРЅ Рё РЅРµ РїРѕРїР°РґС‘С‚ РІ С‚РµРєСѓС‰РёР№ РїР»Р°РЅ.",
-            manual_override: "РЎРѕРІРїР°РґРµРЅРёРµ РёР·РјРµРЅРµРЅРѕ. РџРµСЂРµСЃРѕР±РµСЂРёС‚Рµ РїР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ.",
+            approved: "Сериал включён в план. Пересоберите план сериалов.",
+            ignored: "Сериал исключён из плана. Пересоберите план сериалов, чтобы обновить операции.",
+            deferred: "Сериал отложен и не попадёт в текущий план.",
+            manual_override: "Совпадение изменено. Пересоберите план сериалов.",
           };
           await runAction(`tv-${decision}-${showId}`, async () => {
             await applyTvReviewDecision(showId, { decision });
-          }, messages[decision] ?? "Р РµС€РµРЅРёРµ РїРѕ СЃРµСЂРёР°Р»Сѓ СЃРѕС…СЂР°РЅРµРЅРѕ.");
+          }, messages[decision] ?? "Решение по сериалу сохранено.");
         }}
         onShowUpdated={async (message) => {
           setInfo(message);
           await loadAll();
         }}
-        onRebuildPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "РџР»Р°РЅ СЃРµСЂРёР°Р»РѕРІ РїРµСЂРµСЃРѕР±СЂР°РЅ.")}
+        onRebuildPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "План сериалов пересобран.")}
       />
 
       {reviewItems.length > 0 ? (
         <section className="panel compact-review-section">
           <div className="section-heading">
-            <h3>РўСЂРµР±СѓСЋС‚ РїСЂРѕРІРµСЂРєРё</h3>
+            <h3>Требуют проверки</h3>
             <span className="muted">{reviewItems.length}</span>
           </div>
           <ItemList variant="review" items={reviewItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
@@ -798,13 +798,13 @@ export function SessionDetailPage() {
           }} />
         </section>
       ) : (
-        <p className="muted compact-section-row">РўСЂРµР±СѓСЋС‚ РїСЂРѕРІРµСЂРєРё: 0</p>
+        <p className="muted compact-section-row">Требуют проверки: 0</p>
       )}
 
       {unmatchedItems.length > 0 ? (
         <section className="panel compact-review-section">
           <div className="section-heading">
-            <h3>РќРµ РЅР°Р№РґРµРЅРѕ</h3>
+            <h3>Не найдено</h3>
             <span className="muted">{unmatchedItems.length}</span>
           </div>
           <ItemList variant="review" items={unmatchedItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
@@ -817,12 +817,12 @@ export function SessionDetailPage() {
           }} />
         </section>
       ) : (
-        <p className="muted compact-section-row">РќРµ РЅР°Р№РґРµРЅРѕ: 0</p>
+        <p className="muted compact-section-row">Не найдено: 0</p>
       )}
 
       {otherItems.length > 0 ? (
         <section className="panel">
-          <h3>Р”СЂСѓРіРёРµ РѕР±СЉРµРєС‚С‹</h3>
+          <h3>Другие объекты</h3>
           <ItemList variant="review" items={otherItems} busy={busy} onCandidates={showCandidates} onDecision={async (itemId, payload) => {
           await applyReviewDecision(itemId, payload);
           await loadAll();
@@ -890,7 +890,7 @@ export function SessionDetailPage() {
       />
 
       <details className="panel">
-        <summary>РўРµС…РЅРёС‡РµСЃРєРёРµ РґРµС‚Р°Р»Рё</summary>
+        <summary>Технические детали</summary>
         <TechnicalTables
           files={files}
           items={items}
