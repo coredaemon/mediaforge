@@ -77,7 +77,6 @@ import { candidatePosterUrl } from "../utils/tmdb";
 type StepStatus = "pending" | "running" | "done" | "error";
 
 const analysisSteps: { key: string; label: string }[] = [
-  { key: "preflight", label: "Проверка AI" },
   { key: "discover", label: "Сканирование файлов" },
   { key: "classification", label: "Классификация папки" },
   { key: "parse", label: "Распознавание названий" },
