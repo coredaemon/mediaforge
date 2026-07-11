@@ -1,14 +1,19 @@
-import type { OperationPlan, PlanValidationResult } from "../types";
+import type { OperationPlan, PlanOperation, PlanValidationResult } from "../types";
+
+export function conflictOperations(operations: PlanOperation[]): PlanOperation[] {
+  return operations.filter((op) => op.validation_status === "conflict");
+}
 
 export function canApplyPlan(
   plan: OperationPlan | null,
   validation: PlanValidationResult | null,
-  operationCount: number,
+  operations: PlanOperation[],
 ): boolean {
   if (!plan) return false;
   if (plan.status !== "READY") return false;
-  if (operationCount === 0) return false;
+  if (operations.length === 0) return false;
   if (validation && validation.conflict_count > 0) return false;
+  if (conflictOperations(operations).length > 0) return false;
   return true;
 }
 

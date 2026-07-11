@@ -1,6 +1,6 @@
-import { labelOperationPreview, labelOperationStatus, labelPlanStatus } from "../../labels";
+import { labelOperationPreview, labelOperationStatus, labelPlanStatus, translateValidationError } from "../../labels";
 import type { ApplyRun, MediaItem, OperationPlan, PlanApplyResult, PlanOperation, PlanValidationResult } from "../../types";
-import { canApplyPlan } from "../../utils/applyState";
+import { canApplyPlan, conflictOperations } from "../../utils/applyState";
 import {
   buildPlanSummary,
   formatPlanSummaryLine,
@@ -89,7 +89,8 @@ export function PlanApplyPanel({
   const summary = buildPlanSummary(operations, items, validation?.conflict_count ?? 0);
   const tvPlan = hasTvOperations(operations);
   const tvOnly = tvPlan && summary.movies === 0;
-  const applyAllowed = canApplyPlan(activePlan, validation, operations.length);
+  const applyAllowed = canApplyPlan(activePlan, validation, operations);
+  const conflicts = conflictOperations(operations);
   const rollbackAllowed = activePlan?.status === "APPLIED" || activePlan?.status === "FAILED";
   const grouped = groupOperationsByItem(operations.filter((op) => !isTvOperation(op)));
   const tvGroups = groupTvOperationsByShow(operations);
@@ -157,6 +158,21 @@ export function PlanApplyPanel({
           Проверка: OK {validation.ok_count} · предупреждения {validation.warning_count} · конфликты{" "}
           {validation.conflict_count}
         </p>
+      ) : null}
+
+      {conflicts.length > 0 ? (
+        <div className="message error plan-conflicts">
+          <strong>План нельзя применить: конфликтов {conflicts.length}.</strong>
+          <ul>
+            {conflicts.map((op) => (
+              <li key={op.id}>{translateValidationError(op.validation_error)}</li>
+            ))}
+          </ul>
+          <p className="muted">
+            Исключите конфликтующие объекты из плана («Не добавлять» → «Пересобрать план») или освободите целевые
+            пути на диске, затем нажмите «Проверить план».
+          </p>
+        </div>
       ) : null}
 
       {applyResult ? (

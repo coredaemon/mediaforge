@@ -539,14 +539,37 @@ export function SessionDetailPage() {
     const planId = selectedPlanId ?? latestPlanId;
     if (planId === null) return;
     setShowApplyModal(false);
-    await runAction("apply-plan", async () => {
+    setActionLoading("apply-plan");
+    setError(null);
+    setInfo(null);
+    setPlanError(null);
+    try {
       const result = await applyPlan(planId, { confirm: true });
       setApplyResult(result);
       setInfo(`Запущено применение ${result.total_operations} операций.`);
       setOperations(await listPlanOperations(planId));
       setPlans(await listPlans(numId));
       await loadApplyRuns(planId);
-    }, "План запущен.");
+    } catch (err) {
+      const raw = err instanceof ApiError ? err.message : "Не удалось запустить применение плана";
+      if (raw.toLowerCase().includes("conflict")) {
+        // Refresh validation so the panel lists the conflicts and the button locks
+        try {
+          const validation = await validatePlan(planId);
+          setValidationResult(validation);
+          setOperations(validation.operations);
+          setPlanError(
+            `Применение заблокировано: конфликтов ${validation.conflict_count}. Подробности — в панели плана ниже.`,
+          );
+        } catch {
+          setPlanError(formatTmdbError(raw));
+        }
+      } else {
+        setPlanError(formatTmdbError(raw));
+      }
+    } finally {
+      setActionLoading(null);
+    }
   }
 
   async function handleRollbackPlan() {

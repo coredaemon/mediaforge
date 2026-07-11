@@ -126,6 +126,22 @@ export function labelMatchSource(value: string | null | undefined): string {
   return matchSourceLabels[value] ?? value;
 }
 
+const validationErrorPatterns: [RegExp, string][] = [
+  [/^Target file already exists: (.+)$/, "Целевой файл уже существует: $1"],
+  [/^Target exists as file: (.+)$/, "Целевой путь занят файлом: $1"],
+  [/^Source file missing: (.+)$/, "Исходный файл не найден: $1"],
+  [/^Source file not found: (.+)$/, "Исходный файл не найден: $1"],
+  [/^Directory already exists: (.+)$/, "Папка уже существует: $1"],
+];
+
+export function translateValidationError(value: string | null | undefined): string {
+  if (!value) return "Конфликт без описания";
+  for (const [pattern, replacement] of validationErrorPatterns) {
+    if (pattern.test(value)) return value.replace(pattern, replacement);
+  }
+  return value;
+}
+
 export function statusTone(value: string | null | undefined): BadgeTone {
   if (!value) return "neutral";
   if (["MATCHED", "READY", "DONE", "COMPLETED", "APPLIED", "PARSED", "DISCOVERED", "approved"].includes(value)) return "success";
