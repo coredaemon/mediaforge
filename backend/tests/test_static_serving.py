@@ -11,9 +11,14 @@ def _write_static_dist(root) -> None:
 
 
 def test_default_static_candidates_include_repo_frontend_dist() -> None:
+    from pathlib import Path
+
+    import backend.app.main as main_module
+
+    repo_root = Path(main_module.__file__).resolve().parents[2]
     candidates = _candidate_static_dirs()
 
-    assert any(path.as_posix().endswith("MediaForge/frontend/dist") for path in candidates)
+    assert repo_root / "frontend" / "dist" in candidates
 
 
 def test_root_returns_frontend_index_when_static_dist_exists(tmp_path, monkeypatch) -> None:

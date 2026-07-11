@@ -1,7 +1,11 @@
 """Tests for path validation in the scan-session creation HTTP route."""
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
+
+windows_only = pytest.mark.skipif(os.name != "nt", reason="Windows backslash path semantics")
 
 
 def test_create_session_rejects_identical_source_and_target(client: TestClient, tmp_path) -> None:
@@ -19,6 +23,7 @@ def test_create_session_rejects_identical_source_and_target(client: TestClient, 
     assert "совпадат" in detail.lower() or "одинаков" in detail.lower()
 
 
+@windows_only
 def test_create_session_rejects_same_paths_with_mixed_slashes(client: TestClient, tmp_path) -> None:
     r"""D:/Foo and D:\Foo should be treated as the same path."""
     folder = tmp_path / "media"
@@ -65,6 +70,7 @@ def test_create_session_rejects_nonexistent_target(client: TestClient, tmp_path)
     assert "не найдена" in response.json()["detail"].lower()
 
 
+@windows_only
 def test_create_session_accepts_windows_backslash_paths(client: TestClient, tmp_path) -> None:
     """Backend must accept paths with backslashes (Windows style)."""
     source = tmp_path / "Фильмы"
@@ -177,6 +183,7 @@ def test_create_session_accepts_sibling_folders(client: TestClient, tmp_path) ->
     assert response.json()["status"] == "CREATED"
 
 
+@windows_only
 def test_create_session_accepts_cyrillic_sibling_folders(client: TestClient, tmp_path) -> None:
     """Cyrillic sibling folders with backslash paths must be accepted."""
     source = tmp_path / "Фильмы"
