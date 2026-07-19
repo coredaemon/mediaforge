@@ -20,6 +20,7 @@ class TvEpisodeRead(BaseModel):
     target_path: str | None = None
     confidence: float | None = None
     needs_review: bool = False
+    review_acknowledged: bool = False
     issue: str | None = None
     warning: str | None = None
     match_source: str | None = None

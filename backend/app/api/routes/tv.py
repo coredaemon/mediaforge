@@ -18,7 +18,7 @@ from ...schemas.tv import (
 from ...services.planning_service import NoMatchedItemsError
 from ...services.scan_session_service import ScanSessionNotFoundError
 from ...services.tmdb_client import TmdbApiKeyMissingError, TmdbClientProtocol
-from ...services.tv_analysis_service import TvAnalysisService, TvShowNotFoundError
+from ...services.tv_analysis_service import TvAnalysisService, TvEpisodeNotFoundError, TvShowNotFoundError
 from ...services.tv_planning_service import TvPlanningService
 
 router = APIRouter(tags=["tv"])
@@ -145,6 +145,17 @@ async def lookup_tv_show_tmdb(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (TmdbApiKeyMissingError, ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/tv-episodes/{episode_id}/acknowledge", response_model=TvEpisodeRead)
+async def acknowledge_tv_episode(
+    episode_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> TvEpisodeRead:
+    try:
+        return await TvAnalysisService(session).acknowledge_episode(episode_id)
+    except TvEpisodeNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/tv-shows/{show_id}/review-decision", response_model=TvShowRead)

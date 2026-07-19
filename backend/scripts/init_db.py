@@ -110,6 +110,7 @@ _COLUMN_MIGRATIONS: list[tuple[str, str, str, str]] = [
     ("plan_operations", "validation_status", "VARCHAR(32)", "DEFAULT 'pending'"),
     ("plan_operations", "validation_error", "TEXT", ""),
     ("plan_operations", "validated_at", "DATETIME", ""),
+    ("tv_episodes", "review_acknowledged", "BOOLEAN", "DEFAULT 0"),
 ]
 
 

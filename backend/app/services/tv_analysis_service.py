@@ -33,6 +33,10 @@ class TvShowNotFoundError(LookupError):
     """Raised when a TV show does not exist."""
 
 
+class TvEpisodeNotFoundError(LookupError):
+    """Raised when a TV episode does not exist."""
+
+
 class TvAnalysisService:
     def __init__(
         self,
@@ -170,6 +174,21 @@ class TvAnalysisService:
         await self.session.refresh(show)
         return show
 
+    async def acknowledge_episode(self, episode_id: int) -> TvEpisode:
+        """Accept an episode as-is, clearing the review flag that blocks planning.
+
+        Used for episodes that differ from TMDB (merged double episodes, shifted
+        numbering) but whose file is correct and should be planned anyway.
+        """
+        episode = await self.tv.get_episode(episode_id)
+        if episode is None:
+            raise TvEpisodeNotFoundError(f"TV episode {episode_id} was not found.")
+        episode.needs_review = False
+        episode.review_acknowledged = True
+        await self.session.commit()
+        await self.session.refresh(episode)
+        return episode
+
     async def _match_grouping(self, grouping: dict[str, Any]) -> dict[str, Any]:
         try:
             client = await self._ensure_tmdb_client()
@@ -257,7 +276,9 @@ class TvAnalysisService:
                     ai_reasoning_summary=audited.get("selected_reason") or grouped_show.get("reason"),
                     local_ai_json=grouped_show,
                     gemini_audit_json=audited,
-                    warnings=[*(grouping.get("warnings") or []), *(audit.get("global_warnings") or []), *(audited.get("issues") or [])],
+                    # Only this show's own issues: session-wide warnings would otherwise
+                    # be repeated in every show card.
+                    warnings=list(audited.get("issues") or []),
                 )
             )
             season_models: dict[int, TvSeason] = {}

@@ -38,6 +38,7 @@ import type {
   TvManualLookupRequest,
   TvManualSearchRequest,
   TvReviewDecisionRequest,
+  TvEpisode,
   TvShow,
 } from "./types";
 
@@ -285,6 +286,10 @@ export function applyTvReviewDecision(showId: number, payload: TvReviewDecisionR
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function acknowledgeTvEpisode(episodeId: number): Promise<TvEpisode> {
+  return request<TvEpisode>(`/tv-episodes/${episodeId}/acknowledge`, { method: "POST" });
 }
 
 export function applyReviewDecision(itemId: number, payload: ReviewDecisionRequest): Promise<MediaItem> {

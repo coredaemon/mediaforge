@@ -176,6 +176,7 @@ export interface TvEpisode {
   target_path: string | null;
   confidence: number | null;
   needs_review: boolean;
+  review_acknowledged: boolean;
   issue: string | null;
   warning: string | null;
   match_source: string | null;

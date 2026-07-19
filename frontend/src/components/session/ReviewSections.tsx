@@ -9,7 +9,7 @@ import {
   manualTvTmdbSearch,
 } from "../../api";
 import { labelMediaItemStatus, labelMediaType, labelOperationStatus, labelOperationType, labelPlanStatus, type BadgeTone } from "../../labels";
-import type { MediaFile, MediaItem, OperationPlan, PlanOperation, TmdbSearchResult, TvShow } from "../../types";
+import type { MediaFile, MediaItem, OperationPlan, PlanOperation, TmdbSearchResult, TvEpisode, TvShow } from "../../types";
 import { isBulkSelectable } from "../../utils/bulkSelection";
 import { candidatePosterUrl } from "../../utils/tmdb";
 import { validateIdLookupInput } from "../../validation";
@@ -48,6 +48,14 @@ function fileNameFromPath(path?: string | null): string {
   return path.split(/[\\/]/).pop() || path;
 }
 
+function flaggedEpisodesOf(shows: TvShow[]): { show: TvShow; episode: TvEpisode }[] {
+  return shows.flatMap((show) =>
+    show.seasons.flatMap((season) =>
+      season.episodes.filter((episode) => episode.needs_review).map((episode) => ({ show, episode })),
+    ),
+  );
+}
+
 export function TvReviewSection({
   shows,
   busy,
@@ -55,6 +63,7 @@ export function TvReviewSection({
   onDecision,
   onShowUpdated,
   onRebuildPlan,
+  onAcknowledgeEpisode,
 }: {
   shows: TvShow[];
   busy: boolean;
@@ -62,13 +71,18 @@ export function TvReviewSection({
   onDecision: (showId: number, decision: string) => Promise<void>;
   onShowUpdated: (message: string) => Promise<void>;
   onRebuildPlan: () => void;
+  onAcknowledgeEpisode: (episodeId: number) => Promise<void>;
 }) {
   const [manualShowId, setManualShowId] = useState<number | null>(null);
   const episodeCount = shows.reduce(
     (total, show) => total + show.seasons.reduce((seasonTotal, season) => seasonTotal + season.episodes.length, 0),
     0,
   );
-  const needsReview = shows.filter((show) => show.needs_review || show.seasons.some((season) => season.episodes.some((episode) => episode.needs_review))).length;
+  // Only an unresolved show blocks planning. A flagged episode is a mismatch with
+  // TMDB (merged double episodes, shifted numbering) — a warning, not a conflict.
+  const blockingShows = shows.filter((show) => show.needs_review);
+  const flaggedEpisodes = flaggedEpisodesOf(shows);
+  const needsReview = blockingShows.length;
   const includedCount = shows.filter((show) => tvShowReviewState(show) === "included" || tvShowReviewState(show) === "manual_override").length;
   const ignoredCount = shows.filter((show) => tvShowReviewState(show) === "ignored").length;
   const deferredCount = shows.filter((show) => tvShowReviewState(show) === "deferred").length;
@@ -85,9 +99,52 @@ export function TvReviewSection({
           В план: {includedCount} · Эпизодов: {episodeCount} · Требуют проверки: {needsReview} · исключено: {ignoredCount} · отложено: {deferredCount}
         </span>
       </div>
-      {planStale ? (
-        <p className="message warning">Р ешения по сериалам изменились. Пересоберите план сериалов.</p>
-      ) : null}
+      <div className="tv-review-actions">
+        {planStale ? (
+          <p className="message warning">Решения по сериалам изменились. Пересоберите план сериалов.</p>
+        ) : null}
+        {blockingShows.length > 0 ? (
+          <p className="message warning">
+            План нельзя пересобрать: не подтверждено совпадение для{" "}
+            {blockingShows.map((show) => show.title).join(", ")}. Выберите совпадение через «Изменить
+            совпадение» или исключите сериал из плана.
+          </p>
+        ) : null}
+        {flaggedEpisodes.length > 0 ? (
+          <details className="tv-flagged-episodes">
+            <summary>
+              Эпизоды с расхождениями по TMDB: {flaggedEpisodes.length} (плану не мешают)
+            </summary>
+            <div className="tv-flagged-episode-list">
+              {flaggedEpisodes.map(({ show, episode }) => (
+                <div className="tv-flagged-episode-row" key={episode.id}>
+                  <span>
+                    {show.title} · S{String(episode.season_number).padStart(2, "0")}E
+                    {String(episode.episode_number).padStart(2, "0")}
+                  </span>
+                  <span className="muted">{episode.issue ?? episode.warning ?? "Требует внимания"}</span>
+                  <button type="button" disabled={busy} onClick={() => void onAcknowledgeEpisode(episode.id)}>
+                    Оставить как есть
+                  </button>
+                </div>
+              ))}
+            </div>
+          </details>
+        ) : null}
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={busy || blockingShows.length > 0}
+          title={
+            blockingShows.length > 0
+              ? `Сначала подтвердите совпадение: ${blockingShows.map((show) => show.title).join(", ")}`
+              : undefined
+          }
+          onClick={onRebuildPlan}
+        >
+          Пересобрать план сериалов
+        </button>
+      </div>
       <div className="review-item-list">
         {shows.map((show) => {
           const state = tvShowReviewState(show);
@@ -145,11 +202,20 @@ export function TvReviewSection({
                       </summary>
                       <div className="tv-episode-list">
                         {season.episodes.map((episode) => (
-                          <div className="tv-episode-row" key={episode.id}>
+                          <div
+                            className={`tv-episode-row${episode.needs_review ? " flagged" : ""}`}
+                            key={episode.id}
+                          >
                             <span>S{String(episode.season_number).padStart(2, "0")}E{String(episode.episode_number).padStart(2, "0")}</span>
                             <span className="path-text" title={episode.source_path ?? undefined}>{fileNameFromPath(episode.source_path)}</span>
                             <span>{episode.title ?? "Название будет уточнено"}</span>
                             {episode.issue || episode.warning ? <span className="status-badge warning">{episode.issue ?? episode.warning}</span> : null}
+                            {episode.review_acknowledged ? <span className="status-badge success">Принято</span> : null}
+                            {episode.needs_review ? (
+                              <button type="button" disabled={busy} onClick={() => void onAcknowledgeEpisode(episode.id)}>
+                                Оставить как есть
+                              </button>
+                            ) : null}
                             {episode.source_path ? (
                               <details className="tv-episode-path">
                                 <summary>Путь</summary>
@@ -166,11 +232,6 @@ export function TvReviewSection({
             </article>
           );
         })}
-      </div>
-      <div className="pipeline-actions">
-        <button type="button" disabled={busy || needsReview > 0} onClick={onRebuildPlan}>
-          Пересобрать план сериалов
-        </button>
       </div>
     </section>
   );

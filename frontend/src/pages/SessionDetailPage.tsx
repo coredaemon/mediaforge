@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ApiError,
+  acknowledgeTvEpisode,
   analyzeTvSession,
   applyPlan,
   applyReviewDecision,
@@ -803,6 +804,12 @@ export function SessionDetailPage() {
           await loadAll();
         }}
         onRebuildPlan={() => void runAction("tv-plan", () => createTvPlan(numId, true), "План сериалов пересобран.")}
+        onAcknowledgeEpisode={async (episodeId) => {
+          await runAction(`tv-episode-${episodeId}`, async () => {
+            await acknowledgeTvEpisode(episodeId);
+            setTvShows(await listTvShows(numId));
+          }, "Эпизод принят как есть.");
+        }}
       />
 
       {reviewItems.length > 0 ? (

@@ -69,6 +69,9 @@ class TvRepository:
         )
         return result.scalars().all()
 
+    async def get_episode(self, episode_id: int) -> TvEpisode | None:
+        return await self.session.get(TvEpisode, episode_id)
+
     async def list_episodes(self, show_id: int) -> Sequence[TvEpisode]:
         result = await self.session.execute(
             select(TvEpisode)

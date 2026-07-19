@@ -30,6 +30,7 @@ class TvEpisode(Base):
     target_path: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(Float)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    review_acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     issue: Mapped[str | None] = mapped_column(Text)
     warning: Mapped[str | None] = mapped_column(Text)
     match_source: Mapped[str | None] = mapped_column(String(64))
