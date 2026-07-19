@@ -122,3 +122,102 @@ async def test_show_warnings_exclude_session_wide_notes(db_session, tmp_path) ->
     shows = await service._persist(scan_session.id, context, grouping, {"shows": {}}, audit)
 
     assert shows[0].warnings == ["this show only issue"]
+
+
+@pytest.mark.asyncio
+async def test_reanalysis_keeps_manual_tmdb_choice(db_session, tmp_path, monkeypatch) -> None:
+    """Re-running the analysis must not discard a match the user picked by hand."""
+    from backend.app.models.media_file import MediaFile
+    from backend.app.models.enums import MediaFileKind
+
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    season_dir = source / "Some Show" / "Season 01"
+    season_dir.mkdir(parents=True)
+    target.mkdir()
+    video = season_dir / "Some.Show.S01E01.mkv"
+    video.write_bytes(b"episode")
+
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.flush()
+    db_session.add(
+        MediaFile(
+            scan_session_id=scan_session.id,
+            path=str(video.resolve()),
+            file_name=video.name,
+            extension=".mkv",
+            size_bytes=video.stat().st_size,
+            modified_at=None,
+            kind=MediaFileKind.VIDEO,
+            is_video=True,
+        )
+    )
+    show = TvShow(
+        scan_session_id=scan_session.id,
+        local_group_id="show-1",
+        title="Выбрано вручную",
+        year=2016,
+        tmdb_id=424242,
+        match_source="manual_tmdb_id",
+        review_decision=ReviewDecision.MANUAL_OVERRIDE,
+        needs_review=False,
+    )
+    db_session.add(show)
+    await db_session.flush()
+    season = TvSeason(show_id=show.id, season_number=1, title="Season 01")
+    db_session.add(season)
+    await db_session.flush()
+    db_session.add(
+        TvEpisode(
+            show_id=show.id,
+            season_id=season.id,
+            season_number=1,
+            episode_number=1,
+            source_path=str(video.resolve()),
+        )
+    )
+    await db_session.commit()
+
+    service = TvAnalysisService(db_session)
+    collected = await service._collect_manual_choices(scan_session.id)
+    assert collected and collected[0]["tmdb_id"] == 424242
+
+    # A fresh analysis produced a different (automatic) match for the same files.
+    rebuilt = TvShow(
+        scan_session_id=scan_session.id,
+        local_group_id="show-1",
+        title="Автоматическое совпадение",
+        tmdb_id=999,
+        match_source="local_llm_grouping",
+        review_decision=ReviewDecision.PENDING,
+        needs_review=False,
+    )
+    db_session.add(rebuilt)
+    await db_session.flush()
+    rebuilt_season = TvSeason(show_id=rebuilt.id, season_number=1, title="Season 01")
+    db_session.add(rebuilt_season)
+    await db_session.flush()
+    db_session.add(
+        TvEpisode(
+            show_id=rebuilt.id,
+            season_id=rebuilt_season.id,
+            season_number=1,
+            episode_number=1,
+            source_path=str(video.resolve()),
+        )
+    )
+    await db_session.commit()
+
+    applied = []
+
+    async def fake_lookup(show_id, *, tmdb_id=None, imdb_id=None, tvdb_id=None, select=False):
+        applied.append((show_id, tmdb_id))
+        return rebuilt
+
+    monkeypatch.setattr(service, "lookup_show_tmdb", fake_lookup)
+    fresh = await service.get_show(rebuilt.id)
+    await service._restore_manual_choices([fresh], collected)
+
+    assert applied == [(rebuilt.id, 424242)]
+    assert fresh.review_decision == ReviewDecision.MANUAL_OVERRIDE

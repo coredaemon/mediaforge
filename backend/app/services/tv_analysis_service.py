@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from ..repositories.tv_repository import TvRepository
 from ..schemas.tmdb import TmdbDetailsResult, TmdbSearchResult
 from ..schemas.tv import TvAnalyzeResult, TvFolderContext, TvReviewDecisionRequest
 from ..services.scan_session_service import ScanSessionNotFoundError
+from ..utils.media_name_parser import parse_episode_range
 from ..utils.tmdb_images import tmdb_image_url
 from .tmdb_client import (
     TmdbApiKeyMissingError,
@@ -27,6 +29,9 @@ from .tmdb_client import (
 )
 from .tv_ai import TvAiGroupingService, TvCloudAuditService
 from .tv_folder_context import TvFolderContextBuilder
+
+
+logger = logging.getLogger(__name__)
 
 
 class TvShowNotFoundError(LookupError):
@@ -59,7 +64,10 @@ class TvAnalysisService:
         scan_session = await self.scan_sessions.get(scan_session_id)
         if scan_session is None:
             raise ScanSessionNotFoundError(f"Scan session {scan_session_id} was not found.")
+        manual_choices: list[dict[str, Any]] = []
         if force:
+            # A re-analysis must not throw away a match the user picked by hand.
+            manual_choices = await self._collect_manual_choices(scan_session_id)
             await self.tv.delete_for_scan_session(scan_session_id)
             await self.session.flush()
 
@@ -73,6 +81,8 @@ class TvAnalysisService:
             tmdb_data,
         )
         shows = await self._persist(scan_session_id, context, grouping, tmdb_data, audit)
+        if manual_choices:
+            await self._restore_manual_choices(shows, manual_choices)
         season_count = sum(len(show.get("seasons") or []) for show in grouping.get("shows", []))
         episode_count = sum(
             len(season.get("episodes") or [])
@@ -173,6 +183,66 @@ class TvAnalysisService:
         await self.session.commit()
         await self.session.refresh(show)
         return show
+
+    async def _collect_manual_choices(self, scan_session_id: int) -> list[dict[str, Any]]:
+        """Remember hand-picked matches, keyed by the files they cover."""
+        choices: list[dict[str, Any]] = []
+        for show in await self.tv.list_shows(scan_session_id):
+            is_manual = show.review_decision == ReviewDecision.MANUAL_OVERRIDE or (
+                show.match_source or ""
+            ).startswith("manual")
+            if not is_manual or not show.tmdb_id:
+                continue
+            files = {
+                episode.source_path
+                for episode in await self.tv.list_episodes(show.id)
+                if episode.source_path
+            }
+            if files:
+                choices.append(
+                    {
+                        "files": files,
+                        "tmdb_id": show.tmdb_id,
+                        "title": show.title,
+                        "year": show.year,
+                        "match_source": show.match_source,
+                        "review_decision": show.review_decision,
+                    }
+                )
+        return choices
+
+    async def _restore_manual_choices(self, shows: list[TvShow], choices: list[dict[str, Any]]) -> None:
+        """Re-apply a remembered match to the show that owns the same files."""
+        for show in shows:
+            # Freshly persisted shows have no loaded relationships, so query episodes.
+            files = {
+                episode.source_path
+                for episode in await self.tv.list_episodes(show.id)
+                if episode.source_path
+            }
+            if not files:
+                continue
+            best = max(
+                choices,
+                key=lambda choice: len(files & choice["files"]),
+                default=None,
+            )
+            if best is None:
+                continue
+            overlap = len(files & best["files"])
+            if overlap * 2 <= len(files):  # needs a majority of the same files
+                continue
+            if show.tmdb_id == best["tmdb_id"]:
+                continue
+            try:
+                await self.lookup_show_tmdb(show.id, tmdb_id=best["tmdb_id"], select=True)
+            except Exception:  # noqa: BLE001 - a failed restore must not fail the analysis
+                logger.warning("Could not restore manual TMDB choice for show %s", show.id, exc_info=True)
+                continue
+            show.review_decision = best["review_decision"]
+            show.match_source = best["match_source"] or "manual_override"
+            show.needs_review = False
+        await self.session.flush()
 
     async def acknowledge_episode(self, episode_id: int) -> TvEpisode:
         """Accept an episode as-is, clearing the review flag that blocks planning.
@@ -291,18 +361,26 @@ class TvAnalysisService:
                 for episode in season.get("episodes") or []:
                     relative_path = episode.get("file_relative_path") or ""
                     media_file = file_by_relative.get(relative_path.replace("\\", "/").lower())
+                    ai_episode_number = int(episode.get("episode_number") or 0)
+                    # The file name is authoritative for numbering: the AI grouping
+                    # reports only the first number of a merged release (S02E01E02),
+                    # silently dropping the second episode.
+                    parsed = parse_episode_range(media_file.path if media_file else relative_path)
+                    episode_number = parsed.episode_number if parsed else ai_episode_number
+                    episode_number_end = parsed.episode_number_end if parsed else None
                     await self.tv.add_episode(
                         TvEpisode(
                             show_id=show.id,
                             season_id=season_model.id,
                             source_file_id=media_file.id if media_file else None,
                             season_number=season_number,
-                            episode_number=int(episode.get("episode_number") or 0),
+                            episode_number=episode_number,
+                            episode_number_end=episode_number_end,
                             title=episode.get("episode_title"),
                             source_path=media_file.path if media_file else relative_path,
                             confidence=episode.get("confidence"),
-                            needs_review=media_file is None or int(episode.get("episode_number") or 0) <= 0,
-                            issue=None if media_file else "Source file was not found in scan session.",
+                            needs_review=media_file is None or episode_number <= 0,
+                            issue=None if media_file else "Исходный файл не найден в сессии сканирования.",
                             match_source="local_llm_grouping",
                         )
                     )
@@ -353,13 +431,23 @@ class TvAnalysisService:
                     continue
                 tmdb_episode = by_number.get(episode.episode_number)
                 if tmdb_episode is None:
-                    episode.needs_review = True
-                    episode.warning = "Episode was not found in TMDB season details."
+                    # Release numbering often runs ahead of TMDB when a season has a
+                    # merged double episode. The file is still valid and must not
+                    # block planning — record it as information only.
+                    episode.warning = (
+                        f"В TMDB у сезона {season.season_number} нет серии "
+                        f"{episode.episode_number} — файл будет разложен по номеру из имени."
+                    )
                     continue
+                episode.warning = None
                 episode.tmdb_episode_id = tmdb_episode.tmdb_episode_id
                 episode.title = episode.title or tmdb_episode.title
                 episode.overview = tmdb_episode.overview
                 episode.air_date = tmdb_episode.air_date
+                if episode.episode_number_end:
+                    paired = by_number.get(episode.episode_number_end)
+                    if paired and paired.title and episode.title:
+                        episode.title = f"{episode.title} / {paired.title}"
 
     async def _apply_show_details(self, show: TvShow, details: TmdbDetailsResult, source: str) -> None:
         show.tmdb_id = details.tmdb_id

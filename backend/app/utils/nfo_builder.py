@@ -63,6 +63,9 @@ def build_episode_nfo(show: TvShow, episode: TvEpisode) -> str:
     lines.append(f"  <showtitle>{escape(show.title)}</showtitle>")
     lines.append(f"  <season>{episode.season_number}</season>")
     lines.append(f"  <episode>{episode.episode_number}</episode>")
+    if episode.episode_number_end and episode.episode_number_end != episode.episode_number:
+        # Kodi/Jellyfin read this as "this file also covers the next episode".
+        lines.append(f"  <episodenumberend>{episode.episode_number_end}</episodenumberend>")
     if episode.air_date:
         lines.append(f"  <aired>{escape(episode.air_date)}</aired>")
     if episode.overview:

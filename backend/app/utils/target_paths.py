@@ -13,18 +13,31 @@ def format_season_folder(season_number: int) -> str:
     return f"Season {season_number:02d}"
 
 
+def format_episode_marker(season_number: int, episode_number: int, episode_number_end: int | None = None) -> str:
+    """S02E01, or S02E01-E02 for a file holding two aired episodes.
+
+    The range form is what Jellyfin, Plex and Kodi expect for merged releases.
+    """
+    marker = f"S{season_number:02d}E{episode_number:02d}"
+    if episode_number_end and episode_number_end != episode_number:
+        return f"{marker}-E{episode_number_end:02d}"
+    return marker
+
+
 def format_episode_filename(
     title: str,
     season_number: int,
     episode_number: int,
     extension: str,
     episode_title: str | None = None,
+    episode_number_end: int | None = None,
 ) -> str:
     safe_title = sanitize_path_segment(title)
+    marker = format_episode_marker(season_number, episode_number, episode_number_end)
     if episode_title:
         safe_episode_title = sanitize_path_segment(episode_title)
-        return f"{safe_title} - S{season_number:02d}E{episode_number:02d} - {safe_episode_title}{extension}"
-    return f"{safe_title} S{season_number:02d}E{episode_number:02d}{extension}"
+        return f"{safe_title} - {marker} - {safe_episode_title}{extension}"
+    return f"{safe_title} {marker}{extension}"
 
 
 def build_movie_folder_path(target_root: Path, matched_title: str, matched_year: int) -> Path:
@@ -67,9 +80,17 @@ def build_tv_video_path_direct(
     *,
     year: int | None = None,
     episode_title: str | None = None,
+    episode_number_end: int | None = None,
 ) -> Path:
     folder = build_tv_season_folder_path_direct(target_root, matched_title, season_number, year)
-    return folder / format_episode_filename(matched_title, season_number, episode_number, extension, episode_title)
+    return folder / format_episode_filename(
+        matched_title,
+        season_number,
+        episode_number,
+        extension,
+        episode_title,
+        episode_number_end,
+    )
 
 
 def build_tv_video_path(

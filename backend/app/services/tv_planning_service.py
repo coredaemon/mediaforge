@@ -94,7 +94,10 @@ class TvPlanningService:
             if season.poster_path:
                 operations.append(_download(season.poster_path, season_folder / "poster.jpg", season_payload, "season_poster"))
         for episode in await self.tv.list_episodes(show.id):
-            if episode.needs_review or not episode.source_file_id:
+            # A flagged episode must still be planned: silently dropping it would
+            # leave the file behind in the source folder with nothing to show for it.
+            # Only a missing file or unusable numbering can exclude an episode.
+            if not episode.source_file_id or episode.episode_number <= 0:
                 continue
             media_file = await self.session.get(MediaFile, episode.source_file_id)
             if media_file is None:
@@ -108,6 +111,7 @@ class TvPlanningService:
                 extension,
                 year=show.year,
                 episode_title=episode.title,
+                episode_number_end=episode.episode_number_end,
             )
             episode.target_path = str(target_video)
             operations.append(

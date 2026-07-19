@@ -252,7 +252,7 @@ def _deterministic_grouping(context: TvFolderContext) -> dict[str, Any]:
                 "language": "ru" if _has_cyrillic(title) else "en",
                 "year": None,
                 "confidence": 0.72,
-                "reason": "Deterministic TV hints grouped files by folder/title.",
+                "reason": "Файлы сгруппированы по структуре папок и названиям.",
                 "tmdb_queries": [title],
                 "external_ids": _first_sidecar_ids(context),
                 "seasons": [],
@@ -260,7 +260,7 @@ def _deterministic_grouping(context: TvFolderContext) -> dict[str, Any]:
             },
         )
         if file.season_number is None or file.episode_number is None:
-            uncertain.append({"file_relative_path": file.relative_path, "reason": "No season/episode number detected"})
+            uncertain.append({"file_relative_path": file.relative_path, "reason": "Не удалось определить номер сезона или серии"})
             continue
         season = _season_bucket(group, file.season_number)
         season["episodes"].append(
@@ -269,7 +269,7 @@ def _deterministic_grouping(context: TvFolderContext) -> dict[str, Any]:
                 "file_relative_path": file.relative_path,
                 "episode_title": None,
                 "confidence": 0.85,
-                "reason": "Deterministic TV filename/folder hint.",
+                "reason": "Номер определён по имени файла и папке.",
             }
         )
     for group in grouped.values():
@@ -287,10 +287,10 @@ def _identity_audit(grouping: dict[str, Any]) -> dict[str, Any]:
                 "corrected_title": show.get("probable_title"),
                 "corrected_year": show.get("year"),
                 "selected_tmdb_id": None,
-                "selected_reason": "Cloud audit unavailable; local grouping retained.",
+                "selected_reason": "Облачная проверка недоступна, использована локальная группировка.",
                 "confidence": show.get("confidence") or 0.5,
                 "seasons": show.get("seasons") or [],
-                "issues": [item.get("reason", "Uncertain file") for item in show.get("uncertain_files", []) if isinstance(item, dict)],
+                "issues": [item.get("reason", "Файл распознан неуверенно") for item in show.get("uncertain_files", []) if isinstance(item, dict)],
                 "manual_review_required": bool(show.get("uncertain_files")),
             }
         )
@@ -350,6 +350,8 @@ def _tv_grouping_prompt(context: TvFolderContext) -> str:
         "Understand the whole folder tree, not file-by-file only.\n"
         "Return strict JSON with shows -> seasons -> episodes -> source files.\n"
         "Preserve Russian/Cyrillic titles. Keep uncertain files.\n"
+        # The UI is Russian: free-text reasons are shown to the user as-is.
+        "Write every human-readable text field (reason, warnings) in Russian.\n"
         "Expected shape: {\"shows\":[{\"local_group_id\":\"show-1\",\"probable_title\":\"...\","
         "\"year\":null,\"confidence\":0.8,\"reason\":\"...\",\"tmdb_queries\":[\"...\"],"
         "\"external_ids\":{},\"seasons\":[{\"season_number\":1,\"confidence\":0.9,"
@@ -369,6 +371,11 @@ def _tv_audit_prompt(context: TvFolderContext, grouping: dict[str, Any], tmdb_da
         "You are MediaForge smart TV audit.\n"
         "Verify show grouping, seasons, episodes, missing/duplicate files, and TMDB selection.\n"
         "Return strict JSON with shows array. Preserve Russian titles unless there is a clear reason.\n"
+        # The UI is Russian: free-text fields are shown to the user as-is.
+        "Write every human-readable text field (issues, selected_reason, global_warnings) "
+        "in Russian, one short sentence each.\n"
+        "A file named SxxEyyEzz holds two aired episodes in one file. That is a normal "
+        "merged release, not a missing episode — do not report it as a problem.\n"
         "Expected shape: {\"shows\":[{\"local_group_id\":\"show-1\",\"approved\":true,"
         "\"corrected_title\":\"...\",\"corrected_year\":2024,\"selected_tmdb_id\":123,"
         "\"selected_reason\":\"...\",\"confidence\":0.9,\"seasons\":[],\"issues\":[],"

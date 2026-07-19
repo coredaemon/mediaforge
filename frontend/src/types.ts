@@ -167,6 +167,7 @@ export interface TvEpisode {
   source_file_id: number | null;
   season_number: number;
   episode_number: number;
+  episode_number_end: number | null;
   absolute_number: number | null;
   title: string | null;
   overview: string | null;

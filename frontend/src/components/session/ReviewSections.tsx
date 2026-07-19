@@ -56,6 +56,15 @@ function flaggedEpisodesOf(shows: TvShow[]): { show: TvShow; episode: TvEpisode 
   );
 }
 
+function episodeMarker(episode: TvEpisode): string {
+  const season = String(episode.season_number).padStart(2, "0");
+  const start = String(episode.episode_number).padStart(2, "0");
+  if (episode.episode_number_end && episode.episode_number_end !== episode.episode_number) {
+    return `S${season}E${start}-E${String(episode.episode_number_end).padStart(2, "0")}`;
+  }
+  return `S${season}E${start}`;
+}
+
 export function TvReviewSection({
   shows,
   busy,
@@ -112,15 +121,12 @@ export function TvReviewSection({
         ) : null}
         {flaggedEpisodes.length > 0 ? (
           <details className="tv-flagged-episodes">
-            <summary>
-              Эпизоды с расхождениями по TMDB: {flaggedEpisodes.length} (плану не мешают)
-            </summary>
+            <summary>Файлы, которые не удалось разобрать: {flaggedEpisodes.length} (плану не мешают)</summary>
             <div className="tv-flagged-episode-list">
               {flaggedEpisodes.map(({ show, episode }) => (
                 <div className="tv-flagged-episode-row" key={episode.id}>
                   <span>
-                    {show.title} · S{String(episode.season_number).padStart(2, "0")}E
-                    {String(episode.episode_number).padStart(2, "0")}
+                    {show.title} · {episodeMarker(episode)}
                   </span>
                   <span className="muted">{episode.issue ?? episode.warning ?? "Требует внимания"}</span>
                   <button type="button" disabled={busy} onClick={() => void onAcknowledgeEpisode(episode.id)}>
@@ -206,10 +212,18 @@ export function TvReviewSection({
                             className={`tv-episode-row${episode.needs_review ? " flagged" : ""}`}
                             key={episode.id}
                           >
-                            <span>S{String(episode.season_number).padStart(2, "0")}E{String(episode.episode_number).padStart(2, "0")}</span>
+                            <span>{episodeMarker(episode)}</span>
                             <span className="path-text" title={episode.source_path ?? undefined}>{fileNameFromPath(episode.source_path)}</span>
                             <span>{episode.title ?? "Название будет уточнено"}</span>
-                            {episode.issue || episode.warning ? <span className="status-badge warning">{episode.issue ?? episode.warning}</span> : null}
+                            {episode.episode_number_end ? (
+                              <span className="status-badge info" title="Две серии в одном файле — разложится как двойной эпизод">
+                                Две серии в одном файле
+                              </span>
+                            ) : null}
+                            {episode.issue ? <span className="status-badge warning">{episode.issue}</span> : null}
+                            {!episode.issue && episode.warning ? (
+                              <span className="status-badge neutral" title={episode.warning}>Уточнение</span>
+                            ) : null}
                             {episode.review_acknowledged ? <span className="status-badge success">Принято</span> : null}
                             {episode.needs_review ? (
                               <button type="button" disabled={busy} onClick={() => void onAcknowledgeEpisode(episode.id)}>

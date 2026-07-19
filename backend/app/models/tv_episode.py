@@ -21,6 +21,8 @@ class TvEpisode(Base):
     source_file_id: Mapped[int | None] = mapped_column(ForeignKey("media_files.id"), index=True)
     season_number: Mapped[int] = mapped_column(Integer, nullable=False)
     episode_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Set only for a merged release holding two aired episodes (S02E01E02).
+    episode_number_end: Mapped[int | None] = mapped_column(Integer)
     absolute_number: Mapped[int | None] = mapped_column(Integer)
     title: Mapped[str | None] = mapped_column(String(512))
     overview: Mapped[str | None] = mapped_column(Text)

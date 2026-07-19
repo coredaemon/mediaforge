@@ -11,6 +11,7 @@ class TvEpisodeRead(BaseModel):
     source_file_id: int | None = None
     season_number: int
     episode_number: int
+    episode_number_end: int | None = None
     absolute_number: int | None = None
     title: str | None = None
     overview: str | None = None
