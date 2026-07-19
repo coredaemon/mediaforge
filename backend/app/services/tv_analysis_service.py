@@ -33,6 +33,9 @@ from .tv_folder_context import TvFolderContextBuilder
 
 logger = logging.getLogger(__name__)
 
+# Above this, a TMDB match is treated as settled and needs no manual confirmation.
+CONFIDENT_MATCH_THRESHOLD = 0.8
+
 
 class TvShowNotFoundError(LookupError):
     """Raised when a TV show does not exist."""
@@ -322,6 +325,8 @@ class TvAnalysisService:
             tmdb_entry = (tmdb_data.get("shows") or {}).get(group_id) or {}
             details = tmdb_entry.get("details") or {}
             title = audited.get("corrected_title") or details.get("title") or grouped_show.get("probable_title") or "Unknown Show"
+            tmdb_id = audited.get("selected_tmdb_id") or details.get("tmdb_id")
+            match_confidence = audited.get("confidence") or grouped_show.get("confidence") or 0.0
             show = await self.tv.add_show(
                 TvShow(
                     scan_session_id=scan_session_id,
@@ -329,7 +334,7 @@ class TvAnalysisService:
                     title=title,
                     original_title=details.get("original_title") or grouped_show.get("original_title"),
                     year=audited.get("corrected_year") or details.get("year") or grouped_show.get("year"),
-                    tmdb_id=audited.get("selected_tmdb_id") or details.get("tmdb_id"),
+                    tmdb_id=tmdb_id,
                     imdb_id=(details.get("external_ids") or {}).get("imdb_id") or (grouped_show.get("external_ids") or {}).get("imdb_id"),
                     tvdb_id=(details.get("external_ids") or {}).get("tvdb_id") or (grouped_show.get("external_ids") or {}).get("tvdb_id"),
                     wikidata_id=(details.get("external_ids") or {}).get("wikidata_id"),
@@ -340,9 +345,15 @@ class TvAnalysisService:
                     backdrop_url=tmdb_image_url(details.get("backdrop_path"), "w780"),
                     language=details.get("metadata_language") or grouped_show.get("language"),
                     match_source=tmdb_entry.get("source") or "local_llm_grouping",
-                    confidence=audited.get("confidence") or grouped_show.get("confidence"),
+                    confidence=match_confidence or None,
                     review_decision=ReviewDecision.PENDING,
-                    needs_review=bool(audited.get("manual_review_required")) or not bool(details.get("tmdb_id")),
+                    # Review is about the match itself. The AI also raises
+                    # manual_review_required for library-completeness remarks
+                    # ("season 3 is missing its finale"), which say nothing about
+                    # whether the show was identified correctly — those must not
+                    # hold the whole show out of the plan.
+                    needs_review=not tmdb_id
+                    or (bool(audited.get("manual_review_required")) and match_confidence < CONFIDENT_MATCH_THRESHOLD),
                     ai_reasoning_summary=audited.get("selected_reason") or grouped_show.get("reason"),
                     local_ai_json=grouped_show,
                     gemini_audit_json=audited,

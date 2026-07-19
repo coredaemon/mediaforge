@@ -69,6 +69,12 @@ class TvPlanningService:
         if count == 0:
             await self.operation_plans.delete(plan)
             await self.session.flush()
+            pending = ", ".join(show.title for show in shows if show.needs_review)
+            if pending:
+                raise NoMatchedItemsError(
+                    f"Не подтверждено совпадение: {pending}. "
+                    "Нажмите «Подтвердить» или выберите совпадение вручную."
+                )
             raise NoMatchedItemsError("Нет сериалов для добавления в план.")
         plan.status = PlanStatus.READY
         await self.session.commit()

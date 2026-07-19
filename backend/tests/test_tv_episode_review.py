@@ -221,3 +221,85 @@ async def test_reanalysis_keeps_manual_tmdb_choice(db_session, tmp_path, monkeyp
 
     assert applied == [(rebuilt.id, 424242)]
     assert fresh.review_decision == ReviewDecision.MANUAL_OVERRIDE
+
+
+@pytest.mark.asyncio
+async def test_confident_match_needs_no_confirmation_despite_ai_remark(db_session, tmp_path) -> None:
+    """A completeness remark ("season 3 is missing its finale") must not gate a solid match."""
+    from backend.app.schemas.tv import TvFolderContext
+
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.commit()
+
+    grouping = {"shows": [{"local_group_id": "g1", "probable_title": "The Good Place", "seasons": []}]}
+    tmdb_data = {"shows": {"g1": {"details": {"tmdb_id": 66573, "title": "В лучшем мире"}, "source": "tmdb"}}}
+    audit = {
+        "shows": [
+            {
+                "local_group_id": "g1",
+                "selected_tmdb_id": 66573,
+                "confidence": 0.97,
+                "manual_review_required": True,
+                "issues": ["В третьем сезоне отсутствует тринадцатый эпизод."],
+            }
+        ]
+    }
+    context = TvFolderContext(root_path=str(source), folders=[], files=[], possible_show_titles=[])
+
+    shows = await TvAnalysisService(db_session)._persist(scan_session.id, context, grouping, tmdb_data, audit)
+
+    assert shows[0].needs_review is False
+    assert shows[0].warnings == ["В третьем сезоне отсутствует тринадцатый эпизод."]
+
+
+@pytest.mark.asyncio
+async def test_uncertain_match_still_asks_for_confirmation(db_session, tmp_path) -> None:
+    from backend.app.schemas.tv import TvFolderContext
+
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.commit()
+
+    grouping = {"shows": [{"local_group_id": "g1", "probable_title": "Неизвестный сериал", "seasons": []}]}
+    tmdb_data = {"shows": {"g1": {"details": {"tmdb_id": 5, "title": "Похожий сериал"}, "source": "tmdb"}}}
+    audit = {
+        "shows": [
+            {"local_group_id": "g1", "selected_tmdb_id": 5, "confidence": 0.4, "manual_review_required": True}
+        ]
+    }
+    context = TvFolderContext(root_path=str(source), folders=[], files=[], possible_show_titles=[])
+
+    shows = await TvAnalysisService(db_session)._persist(scan_session.id, context, grouping, tmdb_data, audit)
+
+    assert shows[0].needs_review is True
+
+
+@pytest.mark.asyncio
+async def test_show_without_tmdb_match_needs_review(db_session, tmp_path) -> None:
+    from backend.app.schemas.tv import TvFolderContext
+
+    source = tmp_path / "source"
+    target = tmp_path / "target"
+    source.mkdir()
+    target.mkdir()
+    scan_session = ScanSession(source_path=str(source), target_path=str(target))
+    db_session.add(scan_session)
+    await db_session.commit()
+
+    grouping = {"shows": [{"local_group_id": "g1", "probable_title": "Ничего не найдено", "seasons": []}]}
+    context = TvFolderContext(root_path=str(source), folders=[], files=[], possible_show_titles=[])
+
+    shows = await TvAnalysisService(db_session)._persist(
+        scan_session.id, context, grouping, {"shows": {}}, {"shows": [{"local_group_id": "g1", "confidence": 0.9}]}
+    )
+
+    assert shows[0].needs_review is True

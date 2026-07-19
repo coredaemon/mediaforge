@@ -115,8 +115,8 @@ export function TvReviewSection({
         {blockingShows.length > 0 ? (
           <p className="message warning">
             План нельзя пересобрать: не подтверждено совпадение для{" "}
-            {blockingShows.map((show) => show.title).join(", ")}. Выберите совпадение через «Изменить
-            совпадение» или исключите сериал из плана.
+            {blockingShows.map((show) => show.title).join(", ")}. Нажмите «Подтвердить» у сериала, если
+            совпадение верное, либо выберите другое через «Изменить совпадение».
           </p>
         ) : null}
         {flaggedEpisodes.length > 0 ? (
