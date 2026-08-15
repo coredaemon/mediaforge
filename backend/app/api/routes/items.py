@@ -15,6 +15,7 @@ from ...schemas.tmdb import TmdbMatchCandidateRead
 from ...services.item_review_service import ItemReviewService
 from ...services.recognition_service import MediaItemNotFoundError as RecognitionMediaItemNotFoundError
 from ...services.recognition_service import RecognitionService
+from ...services.tmdb_client import TmdbAuthError, TmdbRateLimitError, TmdbUnavailableError
 from ...services.tmdb_service import (
     MediaItemNotFoundError,
     TMDBService,
@@ -79,8 +80,12 @@ async def manual_tmdb_search(
         )
     except MediaItemNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TmdbApiKeyMissingError as exc:
+    except (TmdbApiKeyMissingError, TmdbAuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TmdbRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TmdbUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except TmdbLookupError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -104,8 +109,12 @@ async def manual_tmdb_lookup(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except TmdbLookupNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TmdbApiKeyMissingError as exc:
+    except (TmdbApiKeyMissingError, TmdbAuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TmdbRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TmdbUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except TmdbLookupError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

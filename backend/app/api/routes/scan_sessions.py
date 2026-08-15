@@ -28,7 +28,13 @@ from ...services.recognition_clients import TitleNormalizerClient
 from ...services.recognition_service import RecognitionService
 from ...services.scan_session_service import ScanSessionNotFoundError, ScanSessionService
 from ...services.scanner_service import ScannerService
-from ...services.tmdb_client import TmdbApiKeyMissingError, TmdbClientProtocol
+from ...services.tmdb_client import (
+    TmdbApiKeyMissingError,
+    TmdbAuthError,
+    TmdbClientProtocol,
+    TmdbRateLimitError,
+    TmdbUnavailableError,
+)
 from ...services.tmdb_service import TMDBService
 
 router = APIRouter(prefix="/scan-sessions", tags=["scan-sessions"])
@@ -242,8 +248,12 @@ async def match_scan_session_tmdb(
         return await TMDBService(session, client=tmdb_client).match_scan_session(session_id, force=force)
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TmdbApiKeyMissingError as exc:
+    except (TmdbApiKeyMissingError, TmdbAuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TmdbRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TmdbUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/{session_id}/plan", response_model=OperationPlanRead)

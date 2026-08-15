@@ -17,7 +17,13 @@ from ...schemas.tv import (
 )
 from ...services.planning_service import NoMatchedItemsError
 from ...services.scan_session_service import ScanSessionNotFoundError
-from ...services.tmdb_client import TmdbApiKeyMissingError, TmdbClientProtocol
+from ...services.tmdb_client import (
+    TmdbApiKeyMissingError,
+    TmdbAuthError,
+    TmdbClientProtocol,
+    TmdbRateLimitError,
+    TmdbUnavailableError,
+)
 from ...services.tv_analysis_service import TvAnalysisService, TvEpisodeNotFoundError, TvShowNotFoundError
 from ...services.tv_planning_service import TvPlanningService
 
@@ -54,6 +60,12 @@ async def analyze_scan_session_tv(
         ).analyze_scan_session(session_id, force=force)
     except ScanSessionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (TmdbApiKeyMissingError, TmdbAuthError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TmdbRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TmdbUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/scan-sessions/{session_id}/tv-shows", response_model=list[TvShowRead])
@@ -122,8 +134,12 @@ async def search_tv_show_tmdb(
         )
     except TvShowNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except TmdbApiKeyMissingError as exc:
+    except (TmdbApiKeyMissingError, TmdbAuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TmdbRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TmdbUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/tv-shows/{show_id}/tmdb-lookup", response_model=TvShowRead)
@@ -143,7 +159,11 @@ async def lookup_tv_show_tmdb(
         )
     except TvShowNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (TmdbApiKeyMissingError, ValueError, LookupError) as exc:
+    except TmdbRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except TmdbUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except (TmdbApiKeyMissingError, TmdbAuthError, ValueError, LookupError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

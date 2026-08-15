@@ -23,6 +23,7 @@ from .tmdb_client import (
     TmdbApiKeyMissingError,
     TmdbClient,
     TmdbClientProtocol,
+    TmdbError,
     apply_details_to_candidate,
     apply_details_to_item,
     fetch_localized_details,
@@ -148,6 +149,10 @@ class TMDBService:
                 if exc.response.status_code == 404:
                     raise TmdbLookupNotFoundError(f"TMDB ID {tmdb_id} not found.") from exc
                 raise TmdbLookupError(f"TMDB lookup failed: {exc}") from exc
+            except TmdbError:
+                # "TMDB is unreachable" is not a bad-input error: keep the typed
+                # failure so the route can answer 502/429 instead of 400.
+                raise
             except Exception as exc:
                 raise TmdbLookupError(f"TMDB lookup failed: {exc}") from exc
             result = _search_result_from_details(details)

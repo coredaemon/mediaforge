@@ -71,6 +71,8 @@ function formatHttpError(status: number, detail?: string): string {
   if (detail) return detail;
   if (status === 404) return "Сессия не найдена";
   if (status === 409) return "Операция не может быть выполнена из-за конфликта данных.";
+  if (status === 429) return "Внешний сервис ограничил количество запросов. Подождите и повторите.";
+  if (status === 502) return "Внешний сервис недоступен. Проверьте интернет-соединение или настройки VPN.";
   if (status === 500) return "Сервер вернул ошибку. Попробуйте ещё раз или перезапустите backend.";
   if (status === 0) return "Backend недоступен.";
   return `Ошибка ${status}`;

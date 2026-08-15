@@ -50,8 +50,24 @@ class TmdbClientProtocol(Protocol):
         ...
 
 
-class TmdbApiKeyMissingError(RuntimeError):
+class TmdbError(RuntimeError):
+    """Base for TMDB access failures that carry a user-facing explanation."""
+
+
+class TmdbApiKeyMissingError(TmdbError):
     """Raised when TMDB matching is requested without a local API key."""
+
+
+class TmdbUnavailableError(TmdbError):
+    """TMDB could not be reached: DNS blackhole, blocked domain, timeout, outage."""
+
+
+class TmdbAuthError(TmdbError):
+    """TMDB rejected the API key."""
+
+
+class TmdbRateLimitError(TmdbError):
+    """TMDB throttled the request."""
 
 
 class TmdbClient:
@@ -160,10 +176,42 @@ class TmdbClient:
     async def _get(self, path: str, params: dict[str, str | int]) -> dict:
         if not self.api_key:
             raise TmdbApiKeyMissingError("TMDB_API_KEY is not configured")
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout_seconds) as client:
-            response = await client.get(path, params=params)
+        try:
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout_seconds) as client:
+                response = await client.get(path, params=params)
+        except httpx.TimeoutException as exc:
+            raise TmdbUnavailableError(
+                f"TMDB не ответил за {self.timeout_seconds:.0f} с. "
+                "Проверьте интернет-соединение или настройки VPN."
+            ) from exc
+        except httpx.HTTPError as exc:
+            # A blocked or blackholed domain lands here: the DNS answer points
+            # somewhere that refuses the connection, so nothing ever reaches TMDB.
+            raise TmdbUnavailableError(
+                "Не удалось подключиться к api.themoviedb.org. "
+                "Домен может быть заблокирован провайдером, DNS или VPN — "
+                "проверьте доступ к TMDB и настройки туннеля."
+            ) from exc
+
+        if response.status_code in {401, 403}:
+            raise TmdbAuthError(
+                "TMDB отклонил ключ API. Проверьте TMDB API key в настройках."
+            )
+        if response.status_code == 429:
+            raise TmdbRateLimitError(
+                "TMDB временно ограничил количество запросов. Подождите немного и повторите."
+            )
+        if response.status_code >= 500:
+            raise TmdbUnavailableError(
+                f"TMDB вернул ошибку сервера ({response.status_code}). Попробуйте позже."
+            )
+        try:
             response.raise_for_status()
-            return response.json()
+        except httpx.HTTPStatusError as exc:
+            raise TmdbUnavailableError(
+                f"TMDB вернул неожиданный статус {response.status_code}."
+            ) from exc
+        return response.json()
 
     def _movie_result(self, payload: dict) -> TmdbSearchResult:
         release_date = payload.get("release_date") or None
