@@ -15,6 +15,7 @@ from ..repositories.scan_session_repository import ScanSessionRepository
 from ..repositories.tmdb_match_candidate_repository import TmdbMatchCandidateRepository
 from ..schemas.operation_plan import OperationPlanRead
 from ..utils.paths import normalize_path
+from ..utils.plan_operations import dedupe_operations
 from ..utils.target_paths import (
     build_movie_folder_path,
     build_movie_video_path,
@@ -70,6 +71,7 @@ class PlanningService:
         )
 
         planned_item_count = 0
+        planned_operations: list[PlanOperation] = []
         for item in matched_items:
             video_file = await self.media_files.get_video_for_media_item(item.id)
             if video_file is None:
@@ -86,10 +88,14 @@ class PlanningService:
             if not operations:
                 continue
 
-            for operation in operations:
-                operation.plan_id = plan.id
-                await self.plan_operations.create(operation)
+            planned_operations.extend(operations)
             planned_item_count += 1
+
+        # Episodes of one show share a folder, so they repeat its CREATE_DIR and
+        # artwork downloads verbatim -- and a repeated download fails on apply.
+        for operation in dedupe_operations(planned_operations):
+            operation.plan_id = plan.id
+            await self.plan_operations.create(operation)
 
         if planned_item_count == 0:
             await self.operation_plans.delete(plan)

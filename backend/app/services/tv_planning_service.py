@@ -15,6 +15,7 @@ from ..repositories.scan_session_repository import ScanSessionRepository
 from ..repositories.tv_repository import TvRepository
 from ..schemas.operation_plan import OperationPlanRead
 from ..utils.paths import normalize_path
+from ..utils.plan_operations import dedupe_operations
 from ..utils.target_paths import (
     build_tv_season_folder_path_direct,
     build_tv_show_folder_path_direct,
@@ -108,7 +109,7 @@ class TvPlanningService:
             media_file = await self.session.get(MediaFile, episode.source_file_id)
             if media_file is None:
                 continue
-            extension = Path(media_file.path).suffix or media_file.extension
+            extension = Path(media_file.path).suffix or media_file.extension or ""
             target_video = build_tv_video_path_direct(
                 target_root,
                 show.title,
@@ -131,11 +132,24 @@ class TvPlanningService:
             )
             operations.append(
                 _write_text(
-                    target_video.with_suffix(".nfo"),
+                    _sidecar_nfo_path(target_video, extension),
                     {**_tv_payload(show, episode=episode), "nfo_type": "episode"},
                 )
             )
-        return operations
+        return dedupe_operations(operations)
+
+
+def _sidecar_nfo_path(video_path: Path, extension: str) -> Path:
+    """The .nfo sitting beside *video_path*.
+
+    Path.with_suffix would misfire on an extensionless source file whose episode
+    title contains a dot ("Show - S01E01 - Vol. 2" -> "Show - S01E01 - Vol.nfo"),
+    so strip only the extension we actually appended.
+    """
+    name = video_path.name
+    if extension and name.endswith(extension):
+        name = name[: -len(extension)]
+    return video_path.parent / f"{name}.nfo"
 
 
 def _tv_payload(show, *, season=None, episode=None) -> dict:

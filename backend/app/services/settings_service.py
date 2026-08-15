@@ -325,10 +325,12 @@ def _default_endpoint(provider: str) -> str:
 
 
 async def _test_gemini(api_key: str) -> TestConnectionResult:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    url = "https://generativelanguage.googleapis.com/v1beta/models"
     try:
         async with httpx.AsyncClient(timeout=_TMDB_TEST_TIMEOUT) as client:
-            resp = await client.get(url)
+            # Pass the key as a param so httpx encodes it, rather than splicing an
+            # unescaped secret straight into the URL string.
+            resp = await client.get(url, params={"key": api_key})
             if resp.status_code == 200:
                 return TestConnectionResult(success=True, message="Gemini подключён успешно")
             return TestConnectionResult(success=False, message=f"Gemini вернул статус {resp.status_code}")

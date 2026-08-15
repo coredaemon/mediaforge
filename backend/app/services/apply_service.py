@@ -39,6 +39,9 @@ class PlanApplyError(ValueError):
 
 class ApplyService:
     DOWNLOAD_TIMEOUT_SECONDS = 30
+    # Generous for TMDB artwork (originals top out well under this) while keeping
+    # a misbehaving response from being buffered into memory without limit.
+    MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024
 
     def __init__(self, session: AsyncSession, http_client: httpx.AsyncClient | None = None) -> None:
         self.session = session
@@ -78,6 +81,11 @@ class ApplyService:
         if not operations:
             raise PlanApplyError("Plan has no operations")
 
+        # Claim the plan atomically: the status check above raced against any other
+        # apply request, and two runs over one plan would move the same files twice.
+        if not await self.operation_plans.claim_for_apply(plan_id):
+            raise PlanApplyError("Plan is already applying", error_code="apply_in_progress")
+
         apply_run = await self.apply_runs.create(
             ApplyRun(
                 operation_plan_id=plan_id,
@@ -85,7 +93,6 @@ class ApplyService:
                 total_operations=len(operations),
             )
         )
-        plan.status = PlanStatus.APPLYING
         await self.session.commit()
         await self.session.refresh(plan)
         await self.session.refresh(apply_run)
@@ -372,7 +379,12 @@ class ApplyService:
             content_type = response.headers.get("content-type", "")
             if content_type and not content_type.startswith("image/"):
                 raise PlanApplyError(f"Unexpected content type: {content_type}")
-            return response.content
+            content = response.content
+            if len(content) > self.MAX_DOWNLOAD_BYTES:
+                raise PlanApplyError(
+                    f"Download exceeds {self.MAX_DOWNLOAD_BYTES} byte limit: {len(content)} bytes"
+                )
+            return content
         finally:
             if owns_client and client is not None:
                 await client.aclose()

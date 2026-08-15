@@ -132,6 +132,18 @@ const validationErrorPatterns: [RegExp, string][] = [
   [/^Source file missing: (.+)$/, "Исходный файл не найден: $1"],
   [/^Source file not found: (.+)$/, "Исходный файл не найден: $1"],
   [/^Directory already exists: (.+)$/, "Папка уже существует: $1"],
+  [
+    /^Two operations write the same target: (.+) \(already claimed by operation (\d+)\)$/,
+    "Две операции пишут в один файл: $1 (уже занят операцией $2). Скорее всего, два файла распознаны как одна серия.",
+  ],
+  [
+    /^Two operations move the same source file: (.+) \(already claimed by operation (\d+)\)$/,
+    "Один исходный файл перемещают две операции: $1 (уже занят операцией $2). Скорее всего, файл назначен двум сериям.",
+  ],
+  [
+    /^Path is (\d+) characters, over the (\d+)-character Windows limit: (.+)\. Shorten the library folder or enable long path support\.$/,
+    "Путь длиной $1 символов превышает лимит Windows в $2 символов: $3. Выберите папку медиатеки покороче или включите поддержку длинных путей.",
+  ],
 ];
 
 export function translateValidationError(value: string | null | undefined): string {

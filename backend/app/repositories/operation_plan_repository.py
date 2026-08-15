@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.enums import PlanStatus
@@ -15,6 +15,20 @@ class OperationPlanRepository:
         self.session.add(plan)
         await self.session.flush()
         return plan
+
+    async def claim_for_apply(self, plan_id: int) -> bool:
+        """Move a plan READY -> APPLYING, returning False if it was already claimed.
+
+        A read-then-write would let two concurrent apply requests both see READY and
+        both start moving the same files, so the transition has to be one statement.
+        """
+        result = await self.session.execute(
+            update(OperationPlan)
+            .where(OperationPlan.id == plan_id, OperationPlan.status == PlanStatus.READY)
+            .values(status=PlanStatus.APPLYING)
+            .execution_options(synchronize_session="fetch")
+        )
+        return result.rowcount == 1
 
     async def get_by_id(self, plan_id: int) -> OperationPlan | None:
         return await self.session.get(OperationPlan, plan_id)

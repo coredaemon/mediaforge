@@ -68,8 +68,9 @@ class RollbackService:
                 failed_count += 1
                 break
 
-        apply_run.done_operations = rolled_back_count
-        apply_run.failed_operations = failed_count
+        # done_operations/failed_operations record what the apply achieved and are
+        # shown as such in the run history; the rollback's own counts travel in
+        # PlanRollbackResult, so leave the apply's tally intact.
         apply_run.finished_at = datetime.now(UTC)
         apply_run.error_message = error_message
 

@@ -3,10 +3,30 @@ from pathlib import Path
 FORBIDDEN_WINDOWS_CHARS = '<>:"/\\|?*'
 TMDB_IMAGE_BASE_URL = "https://image.tmdb.org/t/p/original"
 
+# Windows refuses to create these names regardless of extension.
+RESERVED_WINDOWS_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
+
+# Stands in for a title that sanitizes away to nothing ("...", "   ").
+# An empty segment would silently collapse out of the path and drop the
+# whole show into the library root.
+FALLBACK_PATH_SEGMENT = "_"
+
 
 def sanitize_path_segment(name: str) -> str:
-    sanitized = "".join("_" if character in FORBIDDEN_WINDOWS_CHARS else character for character in name)
-    return sanitized.rstrip(" .")
+    sanitized = "".join(
+        "_" if character in FORBIDDEN_WINDOWS_CHARS or ord(character) < 32 else character
+        for character in name
+    )
+    sanitized = sanitized.strip().rstrip(" .")
+    if not sanitized:
+        return FALLBACK_PATH_SEGMENT
+    if sanitized.split(".")[0].upper() in RESERVED_WINDOWS_NAMES:
+        return f"_{sanitized}"
+    return sanitized
 
 
 def format_season_folder(season_number: int) -> str:
