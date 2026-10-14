@@ -38,12 +38,10 @@ class ScannerService:
         scan_session.started_at = datetime.now(UTC)
         scan_session.finished_at = None
         scan_session.error_message = None
-        await self.media_files.delete_for_scan_session(scan_session_id)
         await self.session.flush()
 
         try:
-            for file_path, scan_error in self._walk_files(source_path):
-                await self.media_files.add(self._build_media_file(scan_session_id, file_path, scan_error))
+            await self._sync_files(scan_session_id, source_path)
             scan_session.status = ScanSessionStatus.DISCOVERED
             scan_session.finished_at = datetime.now(UTC)
             await self.session.commit()
@@ -57,6 +55,30 @@ class ScannerService:
             await self.session.commit()
             await self.session.refresh(scan_session)
             return scan_session
+
+    async def _sync_files(self, scan_session_id: int, source_path: Path) -> None:
+        """Bring the session's file rows in line with the disk, keeping row identity.
+
+        Re-scanning used to delete every row and insert fresh ones. That cut each
+        item off from its video (media_item_id lived on the old rows) and broke the
+        foreign key from tv_episodes, so a re-scan after matching left nothing that
+        could be planned. Rows are now matched by path: kept and refreshed when the
+        file is still there, added when new, and removed only when the file is gone.
+        """
+        existing = {
+            _path_key(media_file.path): media_file
+            for media_file in await self.media_files.list_for_scan_session(scan_session_id)
+        }
+        for file_path, scan_error in self._walk_files(source_path):
+            fresh = self._build_media_file(scan_session_id, file_path, scan_error)
+            current = existing.pop(_path_key(fresh.path), None)
+            if current is None:
+                await self.media_files.add(fresh)
+                continue
+            for field in _RESCANNED_FIELDS:
+                setattr(current, field, getattr(fresh, field))
+        await self.media_files.delete_by_ids([media_file.id for media_file in existing.values()])
+        await self.session.flush()
 
     def _walk_files(self, root: Path) -> list[tuple[Path, str | None]]:
         discovered: list[tuple[Path, str | None]] = []
@@ -110,3 +132,23 @@ class ScannerService:
             is_sidecar=kind == MediaFileKind.SIDECAR,
             scan_error=scan_error,
         )
+
+
+# What a re-scan may overwrite on a kept row. Links built by later pipeline steps
+# (media_item_id, reused_from_memory) are deliberately left alone.
+_RESCANNED_FIELDS = (
+    "path",
+    "file_name",
+    "extension",
+    "size_bytes",
+    "modified_at",
+    "kind",
+    "is_video",
+    "is_subtitle",
+    "is_sidecar",
+    "scan_error",
+)
+
+
+def _path_key(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))

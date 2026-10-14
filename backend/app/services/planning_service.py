@@ -133,7 +133,8 @@ class PlanningService:
         target_root: Path,
         selected_candidate: TmdbMatchCandidate | None,
     ) -> list[PlanOperation]:
-        if item.media_type == MediaType.MOVIE:
+        media_type = _effective_media_type(item)
+        if media_type == MediaType.MOVIE:
             return self._build_movie_operations(
                 item=item,
                 source_video_path=source_video_path,
@@ -141,7 +142,7 @@ class PlanningService:
                 target_root=target_root,
                 selected_candidate=selected_candidate,
             )
-        if item.media_type == MediaType.TV_EPISODE:
+        if media_type == MediaType.TV_EPISODE:
             return self._build_tv_operations(
                 item=item,
                 source_video_path=source_video_path,
@@ -283,3 +284,18 @@ class PlanningService:
             target_path=str(target_path),
             payload_json=payload,
         )
+
+
+def _effective_media_type(item: MediaItem) -> MediaType:
+    """The item type to plan with, trusting a confirmed TMDB match over a failed parse.
+
+    Items matched before the match started setting media_type are stored as
+    MATCHED + UNKNOWN; without this they would never reach a plan.
+    """
+    if item.media_type != MediaType.UNKNOWN:
+        return item.media_type
+    if item.tmdb_media_type == "movie":
+        return MediaType.MOVIE
+    if item.tmdb_media_type == "tv":
+        return MediaType.TV_EPISODE
+    return MediaType.UNKNOWN

@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models.enums import MediaFileKind
@@ -34,6 +34,22 @@ class MediaFileRepository:
         media_file.media_item_id = media_item_id
         await self.session.flush()
         return media_file
+
+    async def delete_by_ids(self, file_ids: Sequence[int]) -> None:
+        """Remove file rows, first detaching TV episodes that point at them.
+
+        tv_episodes.source_file_id is a foreign key, so deleting a referenced row
+        outright fails; an episode whose file is gone keeps its numbering and is
+        simply left without a source.
+        """
+        if not file_ids:
+            return
+        from ..models.tv_episode import TvEpisode
+
+        await self.session.execute(
+            update(TvEpisode).where(TvEpisode.source_file_id.in_(file_ids)).values(source_file_id=None)
+        )
+        await self.session.execute(delete(MediaFile).where(MediaFile.id.in_(file_ids)))
 
     async def delete_for_scan_session(self, scan_session_id: int) -> None:
         await self.session.execute(delete(MediaFile).where(MediaFile.scan_session_id == scan_session_id))

@@ -192,6 +192,7 @@ class TMDBService:
             apply_details_to_item(item, details)
             item.tmdb_id = candidate.tmdb_id
             item.tmdb_media_type = candidate.media_type
+            _adopt_tmdb_media_type(item, candidate.media_type)
             item.matched_title = candidate.title
             item.matched_year = candidate.year
             item.match_confidence = candidate.score
@@ -259,6 +260,7 @@ class TMDBService:
             item.metadata_language = candidate.metadata_language or RU_LANGUAGE
         item.tmdb_id = candidate.tmdb_id
         item.tmdb_media_type = candidate.media_type
+        _adopt_tmdb_media_type(item, candidate.media_type)
         item.matched_title = candidate.title
         item.matched_year = candidate.year
         item.match_confidence = candidate.score
@@ -321,6 +323,7 @@ class TMDBService:
             best_candidate.is_selected = True
             item.tmdb_id = best_candidate.tmdb_id
             item.tmdb_media_type = best_candidate.media_type
+            _adopt_tmdb_media_type(item, best_candidate.media_type)
             item.matched_title = best_candidate.title
             item.matched_year = best_candidate.year
             item.match_confidence = best_candidate.score
@@ -448,6 +451,7 @@ class TMDBService:
             item.wikidata_id = candidate.wikidata_id
         item.tmdb_id = candidate.tmdb_id
         item.tmdb_media_type = candidate.media_type
+        _adopt_tmdb_media_type(item, candidate.media_type)
         item.matched_title = candidate.title
         item.matched_year = candidate.year
         item.match_confidence = candidate.score
@@ -638,6 +642,19 @@ def _search_result_from_details(details: TmdbDetailsResult) -> TmdbSearchResult:
         poster_path=details.poster_path,
         backdrop_path=details.backdrop_path,
     )
+
+
+def _adopt_tmdb_media_type(item: MediaItem, tmdb_media_type: str | None) -> None:
+    """Give a confirmed match the item type the planner needs.
+
+    TMDB is canonical once a match is confirmed, but the item type used to stay
+    whatever the filename parser guessed. An unparseable name left it UNKNOWN, so a
+    manual TMDB-ID match produced a MATCHED item the planner silently skipped.
+    """
+    if tmdb_media_type == "movie":
+        item.media_type = MediaType.MOVIE
+    elif tmdb_media_type == "tv" and item.media_type not in {MediaType.TV_EPISODE, MediaType.TV_SHOW}:
+        item.media_type = MediaType.TV_EPISODE
 
 
 def _priority_media_type(item: MediaItem) -> MediaType:
