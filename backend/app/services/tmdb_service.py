@@ -79,6 +79,9 @@ class TMDBService:
             video_file = await self.media_files.get_video_for_media_item(item.id)
             if outcome == MediaItemStatus.MATCHED:
                 await self.processed_media.record_from_item(item, video_file, session_id=session_id)
+            # Commit per item so the write lock is not held across the next item's
+            # TMDB requests; a whole-session transaction locked SQLite for minutes.
+            await self.session.commit()
 
         await self.session.commit()
         return TmdbMatchResult(
@@ -277,22 +280,16 @@ class TMDBService:
         return candidate
 
     async def _match_item(self, item: MediaItem) -> MediaItemStatus:
-        item.status = MediaItemStatus.MATCHING
-        await self.session.flush()
-
+        # Talk to TMDB first and write afterwards. SQLite allows a single writer, and
+        # the first write of a transaction takes its lock: writing before the search
+        # held that lock through every request below, so any concurrent step failed
+        # with "database is locked".
         if await self._try_priority_id_lookup(item):
             return item.status
 
-        item.tmdb_id = None
-        item.tmdb_media_type = None
-        item.matched_title = None
-        item.matched_year = None
-        item.match_confidence = None
-        await self.candidates.delete_for_media_item(item.id)
-        await self.session.flush()
-
         results, score_title, score_year = await self._search_for_item(item)
         if not results or not score_title:
+            await self._reset_match(item)
             item.status = MediaItemStatus.UNMATCHED
             item.needs_review = True
             await self.session.flush()
@@ -313,10 +310,13 @@ class TMDBService:
             key=lambda pair: pair[1],
             reverse=True,
         )
-        saved_candidates = [
-            await self.candidates.create(self._candidate_from_result(item.id, result, score))
-            for result, score in scored
-        ]
+        new_candidates = [self._candidate_from_result(item.id, result, score) for result, score in scored]
+        # Still detached from the session, so these detail requests write nothing.
+        for candidate in new_candidates[:3]:
+            await self._enrich_candidate(candidate)
+
+        await self._reset_match(item)
+        saved_candidates = [await self.candidates.create(candidate) for candidate in new_candidates]
         best_candidate = saved_candidates[0]
 
         if best_candidate.score >= AUTO_SELECT_THRESHOLD:
@@ -345,8 +345,6 @@ class TMDBService:
             item.status = MediaItemStatus.NEEDS_REVIEW
             item.needs_review = True
 
-        for candidate in saved_candidates[:3]:
-            await self._enrich_candidate(candidate)
         if best_candidate.score >= AUTO_SELECT_THRESHOLD:
             item.imdb_id = best_candidate.imdb_id
             item.tvdb_id = best_candidate.tvdb_id
@@ -359,6 +357,14 @@ class TMDBService:
 
         await self.session.flush()
         return item.status
+
+    async def _reset_match(self, item: MediaItem) -> None:
+        item.tmdb_id = None
+        item.tmdb_media_type = None
+        item.matched_title = None
+        item.matched_year = None
+        item.match_confidence = None
+        await self.candidates.delete_for_media_item(item.id)
 
     async def _try_priority_id_lookup(self, item: MediaItem) -> bool:
         await self._ensure_client()

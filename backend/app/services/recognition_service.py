@@ -248,6 +248,10 @@ class RecognitionService:
                     model=getattr(client, "model", None) if client else getattr(fallback_client, "model", None),
                 )
                 error_count += 1
+            # Commit per item: the AI call above takes seconds, and an open write
+            # transaction across it blocks every other writer until SQLite gives up
+            # with "database is locked".
+            await self.session.commit()
 
         await self.session.commit()
         return RecognitionNormalizeResult(
